@@ -43,16 +43,21 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-add_subdirectory(deps/libigl)
+# Find 3rd party packages
+find_package(Eigen3 REQUIRED)
+find_package(libigl CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(imguizmo CONFIG REQUIRED)
+find_package(OpenCASCADE REQUIRED)
+find_package(nfd CONFIG REQUIRED)
 
-igl_include(glfw)
-igl_include(imgui)
-igl_include(opengl)
-igl_include(copyleft cgal)
-
-# Add your project files
-file(GLOB SRC_FILES *.cpp)
-add_executable(${PROJECT_NAME} ${SRC_FILES})
+add_executable(${PROJECT_NAME}
+    imgui/ImGuiPlugin.cpp
+    imgui/ImGuiMenu.cpp
+    imgui/ImGuizmoWidget.cpp
+    imgui/SelectionWidget.cpp
+    src/CADWidget.cpp
+    src/main.cpp)
 
 # After buiding, copy examples to the build directory
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -65,17 +70,16 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 
 # Link igl (and the glfw module) to your project
 target_link_libraries(${PROJECT_NAME} PUBLIC
-    igl::glfw
+    igl::igl_glfw
+    igl::igl_opengl
 
     # # Other modules you could link to
     # igl::embree
-    igl::imgui
-    igl::opengl
 
     # igl::stb
     # igl::predicates
     # igl::xml
-    igl_copyleft::cgal
+    igl_copyleft::igl_copyleft_cgal
 
     # igl_copyleft::comiso
     # igl_copyleft::core
@@ -84,4 +88,8 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     # igl_restricted::matlab
     # igl_restricted::mosek
     # igl_restricted::triangle
+    nfd::nfd
+    imgui::imgui
+    imguizmo::imguizmo
+    ${OpenCASCADE_LIBRARIES}
 )
