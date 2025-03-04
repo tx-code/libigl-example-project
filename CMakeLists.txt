@@ -31,14 +31,6 @@ if(CCACHE_PROGRAM)
     set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM} CACHE STRING "")
 endif()
 
-# Always add colored output (e.g. when using Ninja)
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    add_compile_options(-fdiagnostics-color=always) # GCC
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-fcolor-diagnostics) # Clang
-    add_compile_options(-ftime-trace) # Clang
-endif()
-
 if(MSVC)
     add_compile_options(/utf-8)
     # Disable verbose include file output during compilation
@@ -53,12 +45,26 @@ find_package(imguizmo CONFIG REQUIRED)
 find_package(OpenCASCADE REQUIRED)
 find_package(nfd CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(Netgen CONFIG REQUIRED)
+
+add_library(imguiext 
+    STATIC 
+    imgui/ImGuiPlugin.cpp 
+    imgui/ImGuiMenu.cpp 
+    imgui/ImGuizmoWidget.cpp 
+    imgui/SelectionWidget.cpp)
+
+target_link_libraries(
+    imguiext PUBLIC 
+    imgui::imgui  
+    igl::igl_glfw
+    igl::igl_opengl     
+    nfd::nfd
+    imgui::imgui
+    spdlog::spdlog
+    imguizmo::imguizmo)
 
 add_executable(${PROJECT_NAME}
-    imgui/ImGuiPlugin.cpp
-    imgui/ImGuiMenu.cpp
-    imgui/ImGuizmoWidget.cpp
-    imgui/SelectionWidget.cpp
     src/CADWidget.cpp
     src/main.cpp)
 
@@ -73,17 +79,13 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 
 # Link igl (and the glfw module) to your project
 target_link_libraries(${PROJECT_NAME} PUBLIC
-    igl::igl_glfw
-    igl::igl_opengl
-
+    imguiext
     # # Other modules you could link to
     # igl::embree
-
     # igl::stb
     # igl::predicates
     # igl::xml
     igl_copyleft::igl_copyleft_cgal
-
     # igl_copyleft::comiso
     # igl_copyleft::core
     # igl_copyleft::cork
@@ -91,9 +93,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     # igl_restricted::matlab
     # igl_restricted::mosek
     # igl_restricted::triangle
-    nfd::nfd
-    imgui::imgui
-    imguizmo::imguizmo
     ${OpenCASCADE_LIBRARIES}
-    spdlog::spdlog
+    nglib
+    ngcore
 )

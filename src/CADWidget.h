@@ -28,10 +28,15 @@ public:
 
   bool import_step(const std::string &filename);
 
-  void shape_to_mesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
+  void shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
+                     Eigen::MatrixXi &F);
+
+  void shape_to_mesh_netgen(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
                      Eigen::MatrixXi &F);
 
   void display_model();
+
+  void toggle_mesh_algorithm();
 
   void reset_view();
 
@@ -40,8 +45,16 @@ private:
 
   std::string current_file;
 
-  Eigen::MatrixXd V;
-  Eigen::MatrixXi F;
+  Eigen::MatrixXd V_occ, V_netgen;
+  Eigen::MatrixXi F_occ, F_netgen;
+
+  enum MeshAlgorithm { OCC, NETGEN };
+  MeshAlgorithm current_algorithm = OCC;
+
+  int occ_mesh_id = -1;
+  int netgen_mesh_id = -1;
+
+  int current_mesh_id = -1;
 
   bool show_model_info = true;
 
