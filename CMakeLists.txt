@@ -41,6 +41,8 @@ endif()
 
 if(MSVC)
     add_compile_options(/utf-8)
+    # Disable verbose include file output during compilation
+    add_compile_options(/nologo /MP)
 endif()
 
 # Find 3rd party packages
@@ -50,6 +52,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)
 find_package(OpenCASCADE REQUIRED)
 find_package(nfd CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 
 add_executable(${PROJECT_NAME}
     imgui/ImGuiPlugin.cpp
@@ -92,4 +95,5 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     imgui::imgui
     imguizmo::imguizmo
     ${OpenCASCADE_LIBRARIES}
+    spdlog::spdlog
 )

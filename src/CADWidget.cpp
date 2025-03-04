@@ -1,15 +1,23 @@
 #include "CADWidget.h"
 // OpenCASCADE 头文件
+#include <BRepBndLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
 #include <Poly_Triangulation.hxx>
 #include <STEPControl_Reader.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 
+
 #include <imgui.h>
+#include <nfd.h>
+#include <spdlog/spdlog.h>
+
 
 CADWidget::CADWidget() { this->name = "CAD"; }
 
@@ -55,15 +63,98 @@ void CADWidget::draw_cad_menu() {
 void CADWidget::draw_model_info() {
   ImGui::Separator();
   ImGui::Text("File: %s", current_file.c_str());
-  ImGui::Text("Vertices: %ld", V.rows());
-  ImGui::Text("Faces: %ld", F.rows());
+  // Topo Shape info
+  if (ImGui::CollapsingHeader("Topo Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+    switch (shape.ShapeType()) {
+    case TopAbs_COMPOUND:
+      ImGui::Text("COMPOUND");
+      break;
+    case TopAbs_COMPSOLID:
+      ImGui::Text("COMPSOLID");
+      break;
+    case TopAbs_SOLID:
+      ImGui::Text("SOLID");
+      break;
+    case TopAbs_SHELL:
+      ImGui::Text("SHELL");
+      break;
+    case TopAbs_FACE:
+      ImGui::Text("FACE");
+      break;
+    case TopAbs_WIRE:
+      ImGui::Text("WIRE");
+      break;
+    case TopAbs_EDGE:
+      ImGui::Text("EDGE");
+      break;
+    case TopAbs_VERTEX:
+      ImGui::Text("VERTEX");
+      break;
+    case TopAbs_SHAPE:
+      ImGui::Text("SHAPE");
+      break;
+    default:
+      ImGui::Text("Unknown Type");
+      break;
+    }
+
+    // 2. 拓扑元素计数
+    TopTools_IndexedMapOfShape faceMap;
+    TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
+
+    ImGui::Text("Faces: %d", faceMap.Extent());
+
+    // 3. 包围盒
+    Bnd_Box boundingBox;
+    BRepBndLib::Add(shape, boundingBox);
+
+    double xMin, yMin, zMin, xMax, yMax, zMax;
+    boundingBox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+
+    ImGui::Text("Bounding Box:");
+    ImGui::Text("  X range: %f to %f", xMin, xMax);
+    ImGui::Text("  Y range: %f to %f", yMin, yMax);
+    ImGui::Text("  Z range: %f to %f", zMin, zMax);
+    ImGui::Text("  Size: %f x %f x %f", (xMax - xMin), (yMax - yMin),
+                (zMax - zMin));
+  }
+
+  // Mesh info
+  if (ImGui::CollapsingHeader("Mesh Info")) {
+    ImGui::Text("Vertices: %ld", V.rows());
+    ImGui::Text("Faces: %ld", F.rows());
+  }
 
   if (ImGui::Button("Reset View", ImVec2(-1, 0))) {
     reset_view();
   }
 }
 
-void CADWidget::open_dialog_load_step() {}
+void CADWidget::open_dialog_load_step() {
+  // First, pop up a dialog to ask the user to select the file
+
+  NFD_Init();
+
+  nfdu8char_t *outPath = nullptr;
+  nfdu8filteritem_t filters[1] = {{"CAD Models", "step,stp"}};
+  nfdopendialogu8args_t args = {0};
+  args.filterList = filters;
+  args.filterCount = 1;
+  auto result = NFD_OpenDialogU8_With(&outPath, &args);
+
+  if (result == NFD_OKAY) {
+    import_step(outPath);
+    NFD_FreePathU8(outPath);
+  } else if (result == NFD_CANCEL) {
+    // User canceled the dialog
+    spdlog::info("User canceled the dialog");
+  } else {
+    // Handle other error codes
+    spdlog::error("Error: {}", NFD_GetError());
+  }
+
+  NFD_Quit();
+}
 
 bool CADWidget::import_step(const std::string &filename) {
   STEPControl_Reader reader;
