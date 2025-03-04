@@ -41,8 +41,6 @@ namespace nglib {
 
 namespace {
 
-void noop_deleter(void *) {}
-
 std::string to_string(const nglib::Ng_Result &res) {
   switch (res) {
   case nglib::NG_ERROR:
@@ -92,6 +90,7 @@ bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
                const double minH, const double maxH, const double grading,
                Eigen::MatrixXd &V, Eigen::MatrixXi &F,
                std::unordered_map<int, std::unordered_set<int>> &face_elems) {
+  // FIXME: 需要优化
   Bnd_Box bbox;
   BRepBndLib::Add(shape, bbox, false);
   const double diag = std::sqrt(bbox.SquareExtent());
@@ -123,6 +122,7 @@ bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
   OCCSetLocalMeshSize(*occ_geometry, mesh, mp, occ_params);
 
   mesh.SetGeometry(occ_geometry);
+  occ_geometry->Analyse(mesh, mp);
   occ_geometry->FindEdges(mesh, mp);
   occ_geometry->MeshSurface(mesh, mp);
 
@@ -154,6 +154,9 @@ bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
   Ng_Exit();
   return true;
 }
+
+// 添加一个全局变量来控制是否需要重置检查缓存
+bool g_reset_inspection_cache = false;
 } // namespace
 
 CADWidget::CADWidget() { this->name = "CAD"; }
@@ -279,27 +282,132 @@ void CADWidget::draw_model_info() {
 
   // Inspection
   if (ImGui::CollapsingHeader("Inspection", ImGuiTreeNodeFlags_DefaultOpen)) {
-    // Check everything we can check
-    // Check if the mesh is edge manifold
-    bool is_edge_manifold = igl::is_edge_manifold(F_current);
-    if (!is_edge_manifold) {
-      ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+    // 声明所有静态变量
+    static bool is_edge_manifold_cached = false;
+    static bool is_vertex_manifold_cached = false;
+    static bool is_edge_manifold_result = false;
+    static bool is_vertex_manifold_result = false;
+    static int last_mesh_id = -1;
+    static MeshAlgorithm last_algorithm = OCC;
+    static bool boundary_loops_cached = false;
+    static std::vector<std::vector<int>> boundary_loops;
+    static bool self_intersections_cached = false;
+    static bool has_self_intersections = false;
+    static int num_self_intersections = 0;
+
+    // 检查是否需要重置缓存
+    if (g_reset_inspection_cache) {
+      is_edge_manifold_cached = false;
+      is_vertex_manifold_cached = false;
+      boundary_loops_cached = false;
+      self_intersections_cached = false;
+      g_reset_inspection_cache = false;
+    }
+    
+    // 只有在网格改变时才重新计算
+    bool need_recheck = (current_mesh_id != last_mesh_id) || 
+                        (current_algorithm != last_algorithm) || 
+                        !is_edge_manifold_cached || 
+                        !is_vertex_manifold_cached;
+    
+    if (need_recheck) {
+      // 更新缓存
+      is_edge_manifold_result = igl::is_edge_manifold(F_current);
+      is_vertex_manifold_result = igl::is_vertex_manifold(F_current);
+      is_edge_manifold_cached = true;
+      is_vertex_manifold_cached = true;
+      last_mesh_id = current_mesh_id;
+      last_algorithm = current_algorithm;
+    }
+    
+    // 显示缓存的结果
+    if (is_edge_manifold_cached) {
+      if (!is_edge_manifold_result) {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
                          "Mesh is not edge manifold");
-    } else {
-      ImGui::TextDisabled("Mesh is edge manifold");
+      } else {
+        ImGui::TextDisabled("Mesh is edge manifold");
+      }
     }
-
-    // Check if the mesh is vertex manifold
-    bool is_vertex_manifold = igl::is_vertex_manifold(F_current);
-    if (!is_vertex_manifold) {
-      ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+    
+    if (is_vertex_manifold_cached) {
+      if (!is_vertex_manifold_result) {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
                          "Mesh is not vertex manifold");
-    } else {
-      ImGui::TextDisabled("Mesh is vertex manifold");
+      } else {
+        ImGui::TextDisabled("Mesh is vertex manifold");
+      }
     }
+    
+    // 边界循环计算
+    if (ImGui::TreeNode("Boundary Loops")) {
+      if (!boundary_loops_cached) {
+        // 只有在需要时才计算边界循环
+        boundary_loops.clear();
+        igl::boundary_loop(F_current, boundary_loops);
+        boundary_loops_cached = true;
+      }
+      
+      ImGui::Text("Number of boundary loops: %zu", boundary_loops.size());
+      
+      // 显示每个边界循环的顶点数
+      for (size_t i = 0; i < boundary_loops.size(); i++) {
+        ImGui::Text("Loop %zu: %zu vertices", i, boundary_loops[i].size());
+      }
+      
+      ImGui::TreePop();
+    }
+    
+    // 自相交检查（计算成本高，仅在用户请求时执行）
+    if (ImGui::TreeNode("Self-Intersections")) {
+      // 检查是否需要重置缓存
+      if (g_reset_inspection_cache) {
+        self_intersections_cached = false;
+      }
+      
+      // 显示当前状态
+      if (!self_intersections_cached) {
+        ImGui::TextDisabled("Self-intersection check not performed yet");
+      } else {
+        if (has_self_intersections) {
+          ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f),
+                           "Mesh has %d self-intersections", num_self_intersections);
+        } else {
+          ImGui::TextDisabled("No self-intersections detected");
+        }
+      }
+      
+      // 添加执行检查的按钮
+      if (ImGui::Button("Check Self-Intersections", ImVec2(-1, 0))) {
+        // 执行自相交检查
+        Eigen::MatrixXi intersect;
+        
+        // 显示进度提示
+        ImGui::TextUnformatted("Checking for self-intersections...");
+        ImGui::TreePop();
+        
+        // 执行检查（这可能很耗时）
+        has_self_intersections = igl::fast_find_self_intersections(V_current, F_current, intersect);
+        
+        // 更新结果
+        num_self_intersections = (intersect.array() == 1).count();
+        self_intersections_cached = true;
 
-    // Boundarys
-    std::vector<std::vector<int>> boundary_loops;
+        // 强制重绘
+        return;
+      }
+      
+      ImGui::TreePop();
+    }
+    
+    // 添加手动刷新按钮
+    if (ImGui::Button("Refresh All Checks", ImVec2(-1, 0))) {
+      is_edge_manifold_cached = false;
+      is_vertex_manifold_cached = false;
+      boundary_loops_cached = false;
+      self_intersections_cached = false;
+      g_reset_inspection_cache = true;
+    }
   }
 
   if (ImGui::Button("Reset View", ImVec2(-1, 0))) {
@@ -460,6 +568,9 @@ void CADWidget::toggle_mesh_algorithm() {
     spdlog::info("Switched to OCC mesh");
   }
 
+  // 重置检查结果缓存
+  reset_inspection_cache();
+
   // 更新显示
   display_model();
 }
@@ -483,7 +594,15 @@ void CADWidget::display_model() {
   viewer->data().compute_normals();
   current_mesh_id = viewer->data().id;
 
+  // 重置检查结果缓存
+  reset_inspection_cache();
+
   reset_view();
+}
+
+void CADWidget::reset_inspection_cache() {
+  // 设置全局标志，表示需要重置缓存
+  g_reset_inspection_cache = true;
 }
 
 void CADWidget::reset_view() {

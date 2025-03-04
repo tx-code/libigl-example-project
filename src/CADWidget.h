@@ -39,6 +39,9 @@ public:
   void toggle_mesh_algorithm();
 
   void reset_view();
+  
+  // 重置检查结果缓存的辅助函数
+  void reset_inspection_cache();
 
 private:
   TopoDS_Shape shape;
