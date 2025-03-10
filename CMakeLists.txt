@@ -66,6 +66,7 @@ target_link_libraries(
 
 add_executable(${PROJECT_NAME}
     src/CADWidget.cpp
+    src/MeshInspector.cpp
     src/main.cpp)
 
 # After buiding, copy examples to the build directory
