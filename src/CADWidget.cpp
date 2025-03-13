@@ -13,6 +13,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <igl/boundary_loop.h>
+#include <igl/cylinder.h>
 #include <igl/dihedral_angles.h>
 #include <igl/fast_find_self_intersections.h>
 #include <igl/is_edge_manifold.h>
@@ -181,7 +182,83 @@ void CADWidget::draw() {
     draw_model_info();
   }
 
+  draw_tool_cutter();
+
   ImGui::End();
+}
+
+// 在随机位置生成指定直径和长度的圆柱体，轴线朝向z轴
+void create_random_cylinder(const double radius,           // 圆柱体半径
+                            const double height,           // 圆柱体高度
+                            const Eigen::Vector3d &center, // 圆柱体中心点
+                            const int axis_divisions, // 圆周方向的分段数
+                            const int height_divisions, // 高度方向的分段数
+                            Eigen::MatrixXd &V,         // 输出顶点
+                            Eigen::MatrixXi &F)         // 输出面
+{
+  // 生成单位圆柱体的侧面（半径为1，高度为1，中心在原点）
+  Eigen::MatrixXd V_side;
+  Eigen::MatrixXi F_side;
+  igl::cylinder(axis_divisions, 2, V_side, F_side); // 高度方向只需要2个分段
+
+  // 计算顶点数和面数
+  int num_side_vertices = V_side.rows();
+  int num_side_faces = F_side.rows();
+
+  // 创建带有顶部和底部的完整圆柱体
+  // 需要添加两个额外的顶点（顶部中心和底部中心）
+  V.resize(num_side_vertices + 2, 3);
+
+  // 复制侧面顶点
+  V.block(0, 0, num_side_vertices, 3) = V_side;
+
+  // 添加顶部中心点和底部中心点
+  V.row(num_side_vertices) = Eigen::Vector3d(0, 0, 1);     // 顶部中心
+  V.row(num_side_vertices + 1) = Eigen::Vector3d(0, 0, 0); // 底部中心
+
+  // 计算顶部和底部的面数
+  int num_cap_faces =
+      axis_divisions * 2; // 顶部和底部各有axis_divisions个三角形
+
+  // 分配面的内存
+  F.resize(num_side_faces + num_cap_faces, 3);
+
+  // 复制侧面的面
+  F.block(0, 0, num_side_faces, 3) = F_side;
+
+  // 添加顶部的面
+  for (int i = 0; i < axis_divisions; i++) {
+    int next_i = (i + 1) % axis_divisions;
+    F.row(num_side_faces + i) =
+        Eigen::Vector3i(i + axis_divisions,      // 顶部外围顶点
+                        next_i + axis_divisions, // 下一个顶部外围顶点
+                        num_side_vertices        // 顶部中心点
+        );
+  }
+
+  // 添加底部的面
+  for (int i = 0; i < axis_divisions; i++) {
+    int next_i = (i + 1) % axis_divisions;
+    F.row(num_side_faces + axis_divisions + i) =
+        Eigen::Vector3i(next_i,               // 下一个底部外围顶点
+                        i,                    // 底部外围顶点
+                        num_side_vertices + 1 // 底部中心点
+        );
+  }
+
+  // 缩放到指定半径和高度
+  for (int i = 0; i < V.rows(); i++) {
+    // 缩放x和y坐标（半径）
+    V(i, 0) *= radius;
+    V(i, 1) *= radius;
+    // 缩放z坐标（高度）
+    V(i, 2) *= height;
+  }
+
+  // 平移到指定中心点
+  for (int i = 0; i < V.rows(); i++) {
+    V.row(i) += (center - Eigen::Vector3d(0, 0, height / 2)).transpose();
+  }
 }
 
 void CADWidget::draw_cad_menu() {
@@ -209,11 +286,54 @@ void CADWidget::draw_cad_menu() {
   }
 }
 
+void CADWidget::draw_tool_cutter() {
+  // Create and Display a mesh to represent the cylindar cutter
+  // Cylinder parameters
+  static double radius = 0.4;
+  static double height = 10.0;
+  constexpr double step_slow = 0.1;
+  constexpr double step_fast = 1.0;
+  const double pos_min = bounding_box_min.minCoeff();
+  const double pos_max = bounding_box_max.maxCoeff();
+  const double scale = (pos_max - pos_min) / 2.0;
+  const double offset = (pos_max + pos_min) / 2.0;
+  static int tool_id = -1;
+  static Eigen::Vector3d center(0, 0, 0);
+  ImGui::InputScalar("Radius", ImGuiDataType_Double, &radius, &step_slow,
+                     &step_fast);
+  ImGui::InputScalar("Height", ImGuiDataType_Double, &height, &step_slow,
+                     &step_fast);
+  ImGui::SliderScalarN("Center", ImGuiDataType_Double, center.data(), 3,
+                       &pos_min, &pos_max);
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Random")) {
+    // Eigen::Vector3d::Random() 默认生成的是范围在 [-1, 1] 之间的随机值
+    center =
+        Eigen::Vector3d::Random() * scale + Eigen::Vector3d::Constant(offset);
+  }
+
+  if (ImGui::Button("Create Cylinder", ImVec2(-1, 0))) {
+    Eigen::MatrixXd V;
+    Eigen::MatrixXi F;
+    create_random_cylinder(radius, height, center, 20, 10, V, F);
+
+    if (tool_id == -1) {
+      tool_id = viewer->append_mesh();
+    } else {
+      viewer->data(tool_id).clear();
+    }
+    viewer->data(tool_id).set_mesh(V, F);
+    viewer->data(tool_id).compute_normals();
+    // white color
+    viewer->data(tool_id).set_colors(Eigen::RowVector3d(1, 1, 1));
+  }
+}
+
 void CADWidget::draw_model_info() {
   ImGui::Separator();
   ImGui::Text("File: %s", current_file.c_str());
   // Topo Shape info
-  if (ImGui::CollapsingHeader("Topo Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::CollapsingHeader("Topo Info")) {
     switch (shape.ShapeType()) {
     case TopAbs_COMPOUND:
       ImGui::Text("COMPOUND");
@@ -254,18 +374,18 @@ void CADWidget::draw_model_info() {
     ImGui::Text("Faces: %d", faceMap.Extent());
 
     // 3. 包围盒
-    Bnd_Box boundingBox;
-    BRepBndLib::Add(shape, boundingBox);
-
-    double xMin, yMin, zMin, xMax, yMax, zMax;
-    boundingBox.Get(xMin, yMin, zMin, xMax, yMax, zMax);
 
     ImGui::Text("Bounding Box:");
-    ImGui::Text("  X range: %f to %f", xMin, xMax);
-    ImGui::Text("  Y range: %f to %f", yMin, yMax);
-    ImGui::Text("  Z range: %f to %f", zMin, zMax);
-    ImGui::Text("  Size: %f x %f x %f", (xMax - xMin), (yMax - yMin),
-                (zMax - zMin));
+    ImGui::Text("  X range: %f to %f", bounding_box_min.x(),
+                bounding_box_max.x());
+    ImGui::Text("  Y range: %f to %f", bounding_box_min.y(),
+                bounding_box_max.y());
+    ImGui::Text("  Z range: %f to %f", bounding_box_min.z(),
+                bounding_box_max.z());
+    ImGui::Text("  Size: %f x %f x %f",
+                (bounding_box_max.x() - bounding_box_min.x()),
+                (bounding_box_max.y() - bounding_box_min.y()),
+                (bounding_box_max.z() - bounding_box_min.z()));
   }
 
   const Eigen::MatrixXd &V_current =
@@ -279,7 +399,7 @@ void CADWidget::draw_model_info() {
   }
 
   // Inspection
-  if (ImGui::CollapsingHeader("Inspection", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (ImGui::CollapsingHeader("Inspection")) {
     // 使用MeshInspector绘制检查UI
     meshInspector.drawInspectionUI();
   }
@@ -342,6 +462,18 @@ bool CADWidget::import_step(const std::string &filename) {
   current_algorithm = OCC;
 
   current_file = filename;
+
+  Bnd_Box boundingBox;
+  BRepBndLib::Add(shape, boundingBox);
+  // Enlarge the bounding box by 10%
+  boundingBox.Enlarge(Sqrt(boundingBox.SquareExtent()) * 0.1);
+
+  bounding_box_min =
+      Eigen::Vector3d(boundingBox.CornerMin().X(), boundingBox.CornerMin().Y(),
+                      boundingBox.CornerMin().Z());
+  bounding_box_max =
+      Eigen::Vector3d(boundingBox.CornerMax().X(), boundingBox.CornerMax().Y(),
+                      boundingBox.CornerMax().Z());
 
   // 显示在查看器中
   display_model();
@@ -447,10 +579,16 @@ void CADWidget::toggle_mesh_algorithm() {
 }
 
 void CADWidget::display_model() {
-  // 如果使用mesh_id方式管理多个网格，可以这样实现
-  if (current_mesh_id >= 0) {
-    // 移除当前显示的网格
-    viewer->erase_mesh(viewer->mesh_index(current_mesh_id));
+  if (occ_mesh_id == -1) {
+    occ_mesh_id = viewer->append_mesh();
+  } else {
+    viewer->data(occ_mesh_id).clear();
+  }
+
+  if (netgen_mesh_id == -1) {
+    netgen_mesh_id = viewer->append_mesh();
+  } else {
+    viewer->data(netgen_mesh_id).clear();
   }
 
   // 根据当前算法选择要显示的网格数据
@@ -459,12 +597,17 @@ void CADWidget::display_model() {
   const Eigen::MatrixXi &F_current =
       (current_algorithm == OCC) ? F_occ : F_netgen;
 
-  // 添加新的网格并获取其ID
-  viewer->data().clear();
-  viewer->data().set_mesh(V_current, F_current);
-  viewer->data().compute_normals();
-  current_mesh_id = viewer->data().id;
-  
+  // we only show one mesh at a time
+  if (current_algorithm == OCC) {
+    viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
+    viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
+    viewer->data(occ_mesh_id).compute_normals();
+  } else {
+    viewer->selected_data_index = viewer->mesh_index(netgen_mesh_id);
+    viewer->data(netgen_mesh_id).set_mesh(V_netgen, F_netgen);
+    viewer->data(netgen_mesh_id).compute_normals();
+  }
+
   // 更新mesh检查器
   meshInspector.setMesh(V_current, F_current);
 
