@@ -15,17 +15,18 @@ MeshInspector::MeshInspector()
       m_isVertexManifold(false), m_hasSelfIntersections(false),
       m_numSelfIntersections(0) {}
 
-void MeshInspector::setMesh(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
-    // 只有当mesh真的改变时才更新
-    if (m_V.rows() != V.rows() || m_F.rows() != F.rows() ||
-        (m_V.rows() > 0 && (m_V - V).norm() > 1e-10) ||
-        (m_F.rows() > 0 && (m_F - F).norm() > 1e-10)) {
-        
-        m_V = V;
-        m_F = F;
-        m_meshChanged = true;
-        resetCache();
-    }
+void MeshInspector::setMesh(const Eigen::MatrixXd &V,
+                            const Eigen::MatrixXi &F) {
+  // 只有当mesh真的改变时才更新
+  if (m_V.rows() != V.rows() || m_F.rows() != F.rows() ||
+      (m_V.rows() > 0 && (m_V - V).norm() > 1e-10) ||
+      (m_F.rows() > 0 && (m_F - F).norm() > 1e-10)) {
+
+    m_V = V;
+    m_F = F;
+    m_meshChanged = true;
+    resetCache();
+  }
 }
 
 void MeshInspector::resetCache() {

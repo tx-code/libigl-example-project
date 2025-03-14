@@ -2,9 +2,11 @@
 #define IGL_OPENGL_GLFW_IMGUI_CADWIDGET_H
 
 #include "../imgui/ImGuiWidget.h"
+#include "IMesher.h"
 #include "MeshInspector.h"
 // 接下来是 Eigen 和标准库
 #include <Eigen/Dense>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,12 +30,6 @@ public:
 
   bool import_step(const std::string &filename);
 
-  void shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
-                         Eigen::MatrixXi &F);
-
-  void shape_to_mesh_netgen(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
-                            Eigen::MatrixXi &F);
-
   void display_model();
 
   void toggle_mesh_algorithm();
@@ -53,8 +49,10 @@ private:
   Eigen::MatrixXd V_occ, V_netgen;
   Eigen::MatrixXi F_occ, F_netgen;
 
-  enum MeshAlgorithm { OCC, NETGEN };
-  MeshAlgorithm current_algorithm = OCC;
+  // Meshers
+  std::shared_ptr<IMesher> occMesher;
+  std::shared_ptr<IMesher> netgenMesher;
+  std::shared_ptr<IMesher> currentMesher;
 
   int occ_mesh_id = -1;
   int netgen_mesh_id = -1;

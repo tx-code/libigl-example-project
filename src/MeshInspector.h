@@ -32,7 +32,7 @@ public:
 private:
   // 当前mesh数据
   Eigen::MatrixXd m_V;
-   Eigen::MatrixXi m_F;
+  Eigen::MatrixXi m_F;
 
   // 缓存标志和结果
   bool m_meshChanged;

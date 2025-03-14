@@ -13,28 +13,13 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+
+// Mesher implementations
+#include "NetgenMesher.h"
+#include "OCCMesher.h"
+
 // Libigl 头文件
 #include <igl/cylinder.h>
-#include <igl/dihedral_angles.h>
-#include <igl/remove_duplicate_vertices.h>
-#include <igl/remove_unreferenced.h>
-#include <igl/unique_simplices.h>
-
-#pragma warning(push, 0)
-
-#ifndef OCCGEOMETRY
-#define OCCGEOMETRY
-#endif
-
-#include <meshing/meshing.hpp>
-#include <meshing/global.hpp>
-#include <occ/occgeom.hpp>
-
-namespace nglib {
-#include <nglib.h>
-}
-
-#pragma warning(pop)
 
 #include <imgui.h>
 #include <nfd.h>
@@ -42,188 +27,15 @@ namespace nglib {
 #include <spdlog/stopwatch.h>
 #include <unordered_set>
 
-namespace {
-
-// 清理网格后，删除重复的顶点
-// (OCC先离散边，再离散面，共享边的顶点会重复#相邻面的数量)
-// 但是暂不清楚为何netgen也有这样的问题？
-void clean_mesh_after_mesher(const Eigen::MatrixXd &V, const Eigen::MatrixXi &F,
-                             Eigen::MatrixXd &V_Clean,
-                             Eigen::MatrixXi &F_Clean) {
-
-  constexpr double epsilon = 1e-7;
-  Eigen::VectorXi I, J; // I is the index of the original vertices, J is the
-                        // index of the cleaned vertices
-  igl::remove_duplicate_vertices(V, F, epsilon, V_Clean, I, J, F_Clean);
-  spdlog::info("removed {} duplicate vertices", V.rows() - V_Clean.rows());
-}
-
-std::string to_string(const nglib::Ng_Result &res) {
-  switch (res) {
-  case nglib::NG_ERROR:
-    return "NG_ERROR";
-  case nglib::NG_OK:
-    return "NG_OK";
-  case nglib::NG_SURFACE_INPUT_ERROR:
-    return "NG_SURFACE_INPUT_ERROR";
-  case nglib::NG_VOLUME_FAILURE:
-    return "NG_VOLUME_FAILURE";
-  case nglib::NG_STL_INPUT_ERROR:
-    return "NG_STL_INPUT_ERROR";
-  case nglib::NG_SURFACE_FAILURE:
-    return "NG_SURFACE_FAILURE";
-  case nglib::NG_FILE_NOT_FOUND:
-    return "NG_FILE_NOT_FOUND";
-  default:
-    return "Unknown";
-  }
-}
-
-bool auto_select_linear_deflection(const TopoDS_Shape &shape, double &delf,
-                                   const double linPrec = 0.001) {
-  Bnd_Box bndBox;
-  BRepBndLib::Add(shape, bndBox);
-
-  if (bndBox.IsVoid()) {
-    return false;
-  }
-
-  bndBox.Enlarge(0.0001);
-
-  // use a fraction of a bounding diagonal
-  const double diag = bndBox.CornerMin().Distance(bndBox.CornerMax());
-  delf = linPrec * diag;
-  spdlog::info("Auto linear deflection: {}", delf);
-  return true;
-}
-
-double auto_select_linear_deflection(const TopoDS_Shape &shape) {
-  double linPrec = 1e-6;
-  auto_select_linear_deflection(shape, linPrec);
-  return linPrec;
-}
-
-enum class Fineness { VeryCoarse, Coarse, Moderate, Fine, VeryFine };
-
-std::shared_ptr<netgen::Mesh>
-generate_mesh(const TopoDS_Shape &shape, Fineness fineness = Fineness::Coarse) {
-  auto occ_geometry =
-      std::make_shared<netgen::OCCGeometry>(shape, 2); // only 2d mesh now
-  auto mesh = std::make_shared<netgen::Mesh>();
-
-  netgen::MeshingParameters mp;
-  // general
-  mp.delaunay2d = true;
-  mp.parthread = true;
-  mp.maxh = 1000;
-  netgen::OCCParameters op;
-
-  // 根据精细度选择参数
-  switch (fineness) {
-  case Fineness::VeryCoarse:
-    mp.curvaturesafety = 1;
-    mp.segmentsperedge = 0.3;
-    mp.grading = 0.7;
-    mp.closeedgefac = 0.5;
-    mp.optsteps3d = 5;
-    op.resthminedgelen = 0.002;
-    op.resthminedgelenenable = true;
-    break;
-  case Fineness::Coarse:
-    mp.curvaturesafety = 1.5;
-    mp.segmentsperedge = 0.5;
-    mp.grading = 0.5;
-    mp.closeedgefac = 1;
-    mp.optsteps3d = 5;
-    op.resthminedgelen = 0.02;
-    op.resthminedgelenenable = true;
-    break;
-  case Fineness::Moderate:
-    mp.curvaturesafety = 2;
-    mp.segmentsperedge = 1;
-    mp.grading = 0.3;
-    mp.closeedgefac = 2;
-    mp.optsteps3d = 5;
-    op.resthminedgelen = 0.2;
-    op.resthminedgelenenable = true;
-    break;
-  case Fineness::Fine:
-    mp.curvaturesafety = 3;
-    mp.segmentsperedge = 2;
-    mp.grading = 0.2;
-    mp.closeedgefac = 3.5;
-    mp.optsteps3d = 5;
-    op.resthminedgelen = 1;
-    op.resthminedgelenenable = true;
-    break;
-  case Fineness::VeryFine:
-    mp.curvaturesafety = 5;
-    mp.segmentsperedge = 3;
-    mp.grading = 0.1;
-    mp.closeedgefac = 5;
-    mp.optsteps3d = 5;
-    op.resthminedgelen = 2;
-    op.resthminedgelenenable = true;
-    break;
-  }
-
-  occ_geometry->SetOCCParameters(op);
-  mesh->SetGeometry(occ_geometry);
-  occ_geometry->BuildVisualizationMesh(0.01); // optional step
-
-  if (auto result = occ_geometry->GenerateMesh(mesh, mp); result != nglib::NG_OK) {
-    spdlog::error("Failed to generate mesh: {}",
-                  to_string(static_cast<nglib::Ng_Result>(result)));
-    return nullptr;
-  }
-
-  return mesh;
-}
-
-bool do_netgen(const TopoDS_Shape &shape, const Fineness fineness,
-               Eigen::MatrixXd &V, Eigen::MatrixXi &F,
-               std::unordered_map<int, std::unordered_set<int>> &face_elems) {
-  using namespace nglib;
-  Ng_Init();
-  auto mesh = generate_mesh(shape, fineness);
-
-  auto nb_nodes = mesh->GetNP();
-  auto nb_triangles = mesh->GetNSE();
-  spdlog::info("before cleaning: Nodes: {}, Triangles: {}", nb_nodes,
-               nb_triangles);
-
-  Eigen::MatrixXd V_Clean(nb_nodes, 3);
-  Eigen::MatrixXi F_Clean(nb_triangles, 3);
-
-  for (int i = 1; i <= nb_nodes; i++) {
-    const auto &p = mesh->Point(netgen::PointIndex(i));
-    V_Clean(i - 1, 0) = p[0];
-    V_Clean(i - 1, 1) = p[1];
-    V_Clean(i - 1, 2) = p[2];
-  }
-
-  for (int i = 0; i < nb_triangles; i++) {
-    const auto &t = (*mesh)[netgen::SurfaceElementIndex(i)];
-    if (t.GetNP() == 3) {
-      F_Clean(i, 0) = t[0] - 1;
-      F_Clean(i, 1) = t[1] - 1;
-      F_Clean(i, 2) = t[2] - 1;
-    } else {
-      spdlog::error("Triangle has {} nodes", t.GetNP());
-    }
-  }
-
-  clean_mesh_after_mesher(V_Clean, F_Clean, V, F);
-  spdlog::info("after cleaning: Nodes: {}, Triangles: {}", V.rows(), F.rows());
-
-  Ng_Exit();
-  return true;
-}
-
-} // namespace
-
 CADWidget::CADWidget() {
   this->name = "CAD";
+
+  // Initialize meshers
+  occMesher = std::make_shared<OCCMesher>();
+  netgenMesher = std::make_shared<NetgenMesher>(NetgenMesher::Fineness::Fine);
+
+  // Set default mesher
+  currentMesher = occMesher;
 }
 
 void CADWidget::init(igl::opengl::glfw::Viewer *_viewer,
@@ -349,18 +161,25 @@ void CADWidget::draw_cad_menu() {
       // 添加切换网格精细度的按钮
       ImGui::Combo("Mesh Fineness", &current_fineness,
                    "Very Coarse\0Coarse\0Moderate\0Fine\0Very Fine\0\0");
-      if (netgen_mesh_generated && current_algorithm == NETGEN) {
+      if (netgen_mesh_generated && currentMesher->getName() == "NETGEN") {
         ImGui::SameLine();
         if (ImGui::SmallButton("Re-generate Mesh")) {
-          // note: no need to check is previous_fineness == current_fineness, we
-          // always re-generate the mesh
-          shape_to_mesh_netgen(shape, V_netgen, F_netgen);
+          // Update Netgen mesher fineness
+          auto netgenMesherPtr =
+              std::dynamic_pointer_cast<NetgenMesher>(netgenMesher);
+          if (netgenMesherPtr) {
+            netgenMesherPtr->setFineness(
+                static_cast<NetgenMesher::Fineness>(current_fineness));
+          }
+
+          // Re-generate mesh
+          netgenMesher->generateMesh(shape, V_netgen, F_netgen);
           display_model();
           previous_fineness = current_fineness;
         }
       }
 
-      if (current_algorithm == OCC) {
+      if (currentMesher->getName() == "OCC") {
         if (ImGui::Button("Switch to NETGEN Mesh", ImVec2(-1, 0))) {
           toggle_mesh_algorithm();
         }
@@ -375,8 +194,7 @@ void CADWidget::draw_cad_menu() {
       }
 
       // 显示当前使用的算法
-      ImGui::Text("Current Algorithm: %s",
-                  current_algorithm == OCC ? "OCC" : "NETGEN");
+      ImGui::Text("Current Algorithm: %s", currentMesher->getName().c_str());
     }
   }
 }
@@ -484,9 +302,9 @@ void CADWidget::draw_model_info() {
   }
 
   const Eigen::MatrixXd &V_current =
-      (current_algorithm == OCC) ? V_occ : V_netgen;
+      (currentMesher->getName() == "OCC") ? V_occ : V_netgen;
   const Eigen::MatrixXi &F_current =
-      (current_algorithm == OCC) ? F_occ : F_netgen;
+      (currentMesher->getName() == "OCC") ? F_occ : F_netgen;
   // Mesh info
   if (ImGui::CollapsingHeader("Mesh Info")) {
     ImGui::Text("Vertices: %ld", V_current.rows());
@@ -546,15 +364,15 @@ bool CADWidget::import_step(const std::string &filename) {
   shape = reader.OneShape();
   spdlog::info("Transfer roots time: {:.3f}s", sw);
 
-  // 只使用OCC算法创建网格
-  shape_to_mesh_occ(shape, V_occ, F_occ);
+  // 使用OCC算法创建网格
+  occMesher->generateMesh(shape, V_occ, F_occ);
   spdlog::info("OCC mesh time: {:.3f}s", sw);
 
   // 重置NETGEN网格生成标志
   netgen_mesh_generated = false;
 
   // 默认使用OCC算法的结果
-  current_algorithm = OCC;
+  currentMesher = occMesher;
 
   current_file = filename;
 
@@ -576,118 +394,24 @@ bool CADWidget::import_step(const std::string &filename) {
   return true;
 }
 
-// occ的网格化一般用于可视化
-void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
-                                  Eigen::MatrixXi &F) {
-  // 创建形状的网格 (OCC算法)
-  IMeshTools_Parameters params;
-  params.Deflection = auto_select_linear_deflection(shape);
-  params.Angle = 0.5;
-  params.Relative = true;
-  params.MinSize = params.Deflection * 0.01;
-  params.InParallel = true; // enable the parallel mode
-
-  try {
-    // Note: will automatically call Perform()
-    BRepMesh_IncrementalMesh mesh(shape, params);
-  } catch (Standard_Failure &e) {
-    spdlog::error("Error: {}", e.GetMessageString());
-    return;
-  }
-
-  // Summary info
-  int total_vertices = 0;
-  double max_deflection = 0.0;
-  int total_triangles = 0;
-  std::vector<int> face_vertex_offsets;
-
-  TopExp_Explorer explorer;
-  for (explorer.Init(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-    TopoDS_Face face = TopoDS::Face(explorer.Current());
-    TopLoc_Location loc;
-
-    Handle(Poly_Triangulation) triangulation =
-        BRep_Tool::Triangulation(face, loc);
-    if (!triangulation.IsNull()) {
-      face_vertex_offsets.push_back(total_vertices);
-      total_vertices += triangulation->NbNodes();
-      total_triangles += triangulation->NbTriangles();
-      max_deflection = std::max(max_deflection, triangulation->Deflection());
-    }
-  }
-
-  spdlog::info("OCC mesh info before cleaning: {} vertices, {} triangles, max "
-               "deflection: {}",
-               total_vertices, total_triangles, max_deflection);
-
-  // 调整矩阵大小
-  Eigen::MatrixXd V_Uncleaned;
-  Eigen::MatrixXi F_Uncleaned;
-  V_Uncleaned.resize(total_vertices, 3);
-  F_Uncleaned.resize(total_triangles, 3);
-
-  // 填充矩阵
-  int vertex_index = 0;
-  int face_index = 0;
-  int face_count = 0;
-
-  for (explorer.Init(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-    TopoDS_Face face = TopoDS::Face(explorer.Current());
-    TopLoc_Location loc;
-
-    Handle(Poly_Triangulation) triangulation =
-        BRep_Tool::Triangulation(face, loc);
-    if (!triangulation.IsNull()) {
-      int offset = face_vertex_offsets[face_count++];
-
-      // 获取顶点
-      const auto &nodes = triangulation->MapNodeArray();
-      for (int i = nodes->Lower(); i <= nodes->Upper(); i++) {
-        gp_Pnt p = nodes->Value(i).Transformed(loc);
-        V_Uncleaned(vertex_index, 0) = p.X();
-        V_Uncleaned(vertex_index, 1) = p.Y();
-        V_Uncleaned(vertex_index, 2) = p.Z();
-        vertex_index++;
-      }
-
-      // 获取三角形
-      const auto &triangles = triangulation->MapTriangleArray();
-      for (int i = triangles->Lower(); i <= triangles->Upper(); i++) {
-        int n1, n2, n3;
-        triangles->Value(i).Get(n1, n2, n3);
-
-        // 根据面朝向调整
-        if (face.Orientation() == TopAbs_REVERSED) {
-          std::swap(n2, n3);
-        }
-
-        F_Uncleaned(face_index, 0) = offset + n1 - 1;
-        F_Uncleaned(face_index, 1) = offset + n2 - 1;
-        F_Uncleaned(face_index, 2) = offset + n3 - 1;
-        face_index++;
-      }
-    }
-  }
-
-  clean_mesh_after_mesher(V_Uncleaned, F_Uncleaned, V, F);
-  spdlog::info("OCC mesh info after cleaning: {} vertices, {} triangles",
-               V.rows(), F.rows());
-}
-
-void CADWidget::shape_to_mesh_netgen(const TopoDS_Shape &shape,
-                                     Eigen::MatrixXd &V, Eigen::MatrixXi &F) {
-  std::unordered_map<int, std::unordered_set<int>> face_elems;
-  do_netgen(shape, static_cast<Fineness>(current_fineness), V, F, face_elems);
-}
-
 void CADWidget::toggle_mesh_algorithm() {
-  if (current_algorithm == OCC) {
-    current_algorithm = NETGEN;
+  if (currentMesher->getName() == "OCC") {
+    currentMesher = netgenMesher;
 
     // 如果NETGEN网格尚未生成，则现在生成
     if (!netgen_mesh_generated || current_fineness != previous_fineness) {
       spdlog::stopwatch sw;
-      shape_to_mesh_netgen(shape, V_netgen, F_netgen);
+
+      // Update Netgen mesher fineness
+      auto netgenMesherPtr =
+          std::dynamic_pointer_cast<NetgenMesher>(netgenMesher);
+      if (netgenMesherPtr) {
+        netgenMesherPtr->setFineness(
+            static_cast<NetgenMesher::Fineness>(current_fineness));
+      }
+
+      // Generate mesh
+      netgenMesher->generateMesh(shape, V_netgen, F_netgen);
       netgen_mesh_generated = true;
       previous_fineness = current_fineness;
       spdlog::info("NETGEN mesh time with fineness {}: {:.3f}s",
@@ -696,7 +420,7 @@ void CADWidget::toggle_mesh_algorithm() {
 
     spdlog::info("Switched to NETGEN mesh");
   } else {
-    current_algorithm = OCC;
+    currentMesher = occMesher;
     spdlog::info("Switched to OCC mesh");
   }
 
@@ -722,7 +446,7 @@ void CADWidget::display_model() {
   Eigen::MatrixXi F_current;
 
   // we only show one mesh at a time
-  if (current_algorithm == OCC) {
+  if (currentMesher->getName() == "OCC") {
     viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
     viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
     viewer->data(occ_mesh_id).compute_normals();
@@ -733,7 +457,7 @@ void CADWidget::display_model() {
     // 确保NETGEN网格已经生成
     if (!netgen_mesh_generated) {
       spdlog::warn("NETGEN mesh not generated yet, switching back to OCC");
-      current_algorithm = OCC;
+      currentMesher = occMesher;
       viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
       viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
       viewer->data(occ_mesh_id).compute_normals();
@@ -764,6 +488,6 @@ void CADWidget::reset_inspection_cache() {
 void CADWidget::reset_view() {
   // 根据当前算法选择要对齐的网格数据
   const Eigen::MatrixXd &V_current =
-      (current_algorithm == OCC) ? V_occ : V_netgen;
+      (currentMesher->getName() == "OCC") ? V_occ : V_netgen;
   viewer->core().align_camera_center(V_current);
 }

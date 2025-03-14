@@ -65,6 +65,9 @@ target_link_libraries(
     imguizmo::imguizmo)
 
 add_executable(${PROJECT_NAME}
+    src/IMesher.cpp
+    src/OCCMesher.cpp
+    src/NetgenMesher.cpp
     src/CADWidget.cpp
     src/MeshInspector.cpp
     src/main.cpp)
