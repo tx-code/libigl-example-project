@@ -27,6 +27,7 @@
 #endif
 
 #include <meshing/meshing.hpp>
+#include <meshing/global.hpp>
 #include <occ/occgeom.hpp>
 
 namespace nglib {
@@ -111,8 +112,10 @@ generate_mesh(const TopoDS_Shape &shape, Fineness fineness = Fineness::Coarse) {
   auto mesh = std::make_shared<netgen::Mesh>();
 
   netgen::MeshingParameters mp;
+  // general
   mp.delaunay2d = true;
   mp.parthread = true;
+  mp.maxh = 1000;
   netgen::OCCParameters op;
 
   // 根据精细度选择参数
@@ -166,11 +169,11 @@ generate_mesh(const TopoDS_Shape &shape, Fineness fineness = Fineness::Coarse) {
 
   occ_geometry->SetOCCParameters(op);
   mesh->SetGeometry(occ_geometry);
+  occ_geometry->BuildVisualizationMesh(0.01); // optional step
 
-  auto result = occ_geometry->GenerateMesh(mesh, mp);
-  if (result != nglib::NG_OK) {
+  if (auto result = occ_geometry->GenerateMesh(mesh, mp); result != nglib::NG_OK) {
     spdlog::error("Failed to generate mesh: {}",
-                  to_string(nglib::Ng_Result(result)));
+                  to_string(static_cast<nglib::Ng_Result>(result)));
     return nullptr;
   }
 
@@ -219,7 +222,9 @@ bool do_netgen(const TopoDS_Shape &shape, const Fineness fineness,
 
 } // namespace
 
-CADWidget::CADWidget() { this->name = "CAD"; }
+CADWidget::CADWidget() {
+  this->name = "CAD";
+}
 
 void CADWidget::init(igl::opengl::glfw::Viewer *_viewer,
                      imgui::ImGuiPlugin *_plugin) {
