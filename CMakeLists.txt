@@ -33,6 +33,7 @@ endif()
 
 if(MSVC)
     add_compile_options(/utf-8)
+
     # Disable verbose include file output during compilation
     add_compile_options(/nologo /MP)
 endif()
@@ -47,20 +48,19 @@ find_package(nfd CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Netgen CONFIG REQUIRED)
 
-add_library(imguiext 
-    STATIC 
-    imgui/ImGuiPlugin.cpp 
-    imgui/ImGuiMenu.cpp 
-    imgui/ImGuizmoWidget.cpp 
+add_library(imguiext
+    STATIC
+    imgui/ImGuiPlugin.cpp
+    imgui/ImGuiMenu.cpp
+    imgui/ImGuizmoWidget.cpp
     imgui/SelectionWidget.cpp)
 
 target_link_libraries(
-    imguiext PUBLIC 
-    imgui::imgui  
-    igl::igl_glfw
-    igl::igl_opengl     
-    nfd::nfd
+    imguiext PUBLIC
     imgui::imgui
+    igl::igl_glfw
+    igl::igl_opengl
+    nfd::nfd
     spdlog::spdlog
     imguizmo::imguizmo)
 
@@ -81,12 +81,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 # Link igl (and the glfw module) to your project
 target_link_libraries(${PROJECT_NAME} PUBLIC
     imguiext
+
     # # Other modules you could link to
     # igl::embree
     # igl::stb
     # igl::predicates
     # igl::xml
     igl_copyleft::igl_copyleft_cgal
+
     # igl_copyleft::comiso
     # igl_copyleft::core
     # igl_copyleft::cork

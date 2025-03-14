@@ -12,12 +12,16 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+// Libigl 头文件
 #include <igl/boundary_loop.h>
 #include <igl/cylinder.h>
 #include <igl/dihedral_angles.h>
 #include <igl/fast_find_self_intersections.h>
 #include <igl/is_edge_manifold.h>
 #include <igl/is_vertex_manifold.h>
+#include <igl/remove_duplicate_vertices.h>
+#include <igl/remove_unreferenced.h>
+#include <igl/unique_simplices.h>
 
 #pragma warning(push, 0)
 
@@ -129,7 +133,8 @@ bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
 
   auto nb_nodes = mesh.GetNP();
   auto nb_triangles = mesh.GetNSE();
-  spdlog::info("Nodes: {}, Triangles: {}", nb_nodes, nb_triangles);
+  spdlog::info("before cleaning: Nodes: {}, Triangles: {}", nb_nodes,
+               nb_triangles);
 
   V.resize(nb_nodes, 3);
   F.resize(nb_triangles, 3);
@@ -156,6 +161,18 @@ bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
   return true;
 }
 
+// 清理网格后，删除重复的顶点(OCC先离散边，再离散面，共享边的顶点会重复#相邻面的数量)
+void clean_mesh_after_mesher(const Eigen::MatrixXd &V, const Eigen::MatrixXi &F,
+                             Eigen::MatrixXd &V_Clean,
+                             Eigen::MatrixXi &F_Clean) {
+
+  constexpr double epsilon = 1e-7;
+  Eigen::VectorXi I, J; // I is the index of the original vertices, J is the
+                        // index of the cleaned vertices
+  igl::remove_duplicate_vertices(V, F, epsilon, V_Clean, I, J, F_Clean);
+  spdlog::info("removed {} duplicate vertices", V.rows() - V_Clean.rows());
+}
+
 } // namespace
 
 CADWidget::CADWidget() { this->name = "CAD"; }
@@ -168,13 +185,17 @@ void CADWidget::init(igl::opengl::glfw::Viewer *_viewer,
 void CADWidget::shutdown() { ImGuiWidget::shutdown(); }
 
 void CADWidget::draw() {
-  ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(200.0f, 0.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(ImGui::GetCursorScreenPos().x + 100, 0),
+                          ImGuiCond_FirstUseEver);
+  // set the size to (0, 0) to make it auto-resized
+  ImGui::SetNextWindowSize(ImVec2(0.0f, 0.0f), ImGuiCond_FirstUseEver);
   bool _viewer_menu_visible = true;
 
-  ImGui::Begin("CAD Tools", &_viewer_menu_visible);
+  ImGui::Begin("CAD Tools", &_viewer_menu_visible,
+               ImGuiWindowFlags_AlwaysAutoResize);
 
   // 绘制CAD菜单内容
+  ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.4f);
   draw_cad_menu();
 
   // 显示当前模型信息
@@ -184,6 +205,7 @@ void CADWidget::draw() {
 
   draw_tool_cutter();
 
+  ImGui::PopItemWidth();
   ImGui::End();
 }
 
@@ -481,14 +503,28 @@ bool CADWidget::import_step(const std::string &filename) {
   return true;
 }
 
+// occ的网格化一般用于可视化
 void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
                                   Eigen::MatrixXi &F) {
   // 创建形状的网格 (OCC算法)
-  BRepMesh_IncrementalMesh mesh(shape, 0.1); // 0.1是偏转值
-  mesh.Perform();
+  IMeshTools_Parameters params;
+  params.Deflection = auto_select_linear_deflection(shape);
+  params.Angle = 0.5;
+  params.Relative = true;
+  params.MinSize = params.Deflection * 0.01;
+  params.InParallel = true; // enable the parallel mode
 
-  // 计算顶点和面的总数
+  try {
+    // Note: will automatically call Perform()
+    BRepMesh_IncrementalMesh mesh(shape, params);
+  } catch (Standard_Failure &e) {
+    spdlog::error("Error: {}", e.GetMessageString());
+    return;
+  }
+
+  // Summary info
   int total_vertices = 0;
+  double max_deflection = 0.0;
   int total_triangles = 0;
   std::vector<int> face_vertex_offsets;
 
@@ -503,12 +539,19 @@ void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
       face_vertex_offsets.push_back(total_vertices);
       total_vertices += triangulation->NbNodes();
       total_triangles += triangulation->NbTriangles();
+      max_deflection = std::max(max_deflection, triangulation->Deflection());
     }
   }
 
+  spdlog::info("OCC mesh info before cleaning: {} vertices, {} triangles, max "
+               "deflection: {}",
+               total_vertices, total_triangles, max_deflection);
+
   // 调整矩阵大小
-  V.resize(total_vertices, 3);
-  F.resize(total_triangles, 3);
+  Eigen::MatrixXd V_Uncleaned;
+  Eigen::MatrixXi F_Uncleaned;
+  V_Uncleaned.resize(total_vertices, 3);
+  F_Uncleaned.resize(total_triangles, 3);
 
   // 填充矩阵
   int vertex_index = 0;
@@ -528,9 +571,9 @@ void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
       const auto &nodes = triangulation->MapNodeArray();
       for (int i = nodes->Lower(); i <= nodes->Upper(); i++) {
         gp_Pnt p = nodes->Value(i).Transformed(loc);
-        V(vertex_index, 0) = p.X();
-        V(vertex_index, 1) = p.Y();
-        V(vertex_index, 2) = p.Z();
+        V_Uncleaned(vertex_index, 0) = p.X();
+        V_Uncleaned(vertex_index, 1) = p.Y();
+        V_Uncleaned(vertex_index, 2) = p.Z();
         vertex_index++;
       }
 
@@ -545,13 +588,17 @@ void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
           std::swap(n2, n3);
         }
 
-        F(face_index, 0) = offset + n1 - 1;
-        F(face_index, 1) = offset + n2 - 1;
-        F(face_index, 2) = offset + n3 - 1;
+        F_Uncleaned(face_index, 0) = offset + n1 - 1;
+        F_Uncleaned(face_index, 1) = offset + n2 - 1;
+        F_Uncleaned(face_index, 2) = offset + n3 - 1;
         face_index++;
       }
     }
   }
+
+  clean_mesh_after_mesher(V_Uncleaned, F_Uncleaned, V, F);
+  spdlog::info("OCC mesh info after cleaning: {} vertices, {} triangles",
+               V.rows(), F.rows());
 }
 
 void CADWidget::shape_to_mesh_netgen(const TopoDS_Shape &shape,
@@ -602,10 +649,12 @@ void CADWidget::display_model() {
     viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
     viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
     viewer->data(occ_mesh_id).compute_normals();
+    viewer->data(occ_mesh_id).set_face_based(true);
   } else {
     viewer->selected_data_index = viewer->mesh_index(netgen_mesh_id);
     viewer->data(netgen_mesh_id).set_mesh(V_netgen, F_netgen);
     viewer->data(netgen_mesh_id).compute_normals();
+    viewer->data(netgen_mesh_id).set_face_based(true);
   }
 
   // 更新mesh检查器
