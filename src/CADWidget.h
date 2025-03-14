@@ -116,6 +116,8 @@ private:
 
   // Flag to track if NETGEN meshing has been performed
   bool netgen_mesh_generated = false;
+  int current_fineness = 3; // fine
+  int previous_fineness = -1;
 };
 
 #endif

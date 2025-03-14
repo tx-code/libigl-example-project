@@ -46,6 +46,20 @@ namespace nglib {
 
 namespace {
 
+// 清理网格后，删除重复的顶点
+// (OCC先离散边，再离散面，共享边的顶点会重复#相邻面的数量)
+// 但是暂不清楚为何netgen也有这样的问题？
+void clean_mesh_after_mesher(const Eigen::MatrixXd &V, const Eigen::MatrixXi &F,
+                             Eigen::MatrixXd &V_Clean,
+                             Eigen::MatrixXi &F_Clean) {
+
+  constexpr double epsilon = 1e-7;
+  Eigen::VectorXi I, J; // I is the index of the original vertices, J is the
+                        // index of the cleaned vertices
+  igl::remove_duplicate_vertices(V, F, epsilon, V_Clean, I, J, F_Clean);
+  spdlog::info("removed {} duplicate vertices", V.rows() - V_Clean.rows());
+}
+
 std::string to_string(const nglib::Ng_Result &res) {
   switch (res) {
   case nglib::NG_ERROR:
@@ -91,86 +105,119 @@ double auto_select_linear_deflection(const TopoDS_Shape &shape) {
   return linPrec;
 }
 
-bool do_netgen(const TopoDS_Shape &shape, const double linDefl,
-               const double minH, const double maxH, const double grading,
-               Eigen::MatrixXd &V, Eigen::MatrixXi &F,
-               std::unordered_map<int, std::unordered_set<int>> &face_elems) {
-  // FIXME: 需要优化
-  Bnd_Box bbox;
-  BRepBndLib::Add(shape, bbox, false);
-  const double diag = std::sqrt(bbox.SquareExtent());
-  spdlog::info("Diagonal: {}", diag);
+enum class Fineness { VeryCoarse, Coarse, Moderate, Fine, VeryFine };
 
-  using namespace nglib;
-  // Parameters definitions
+std::shared_ptr<netgen::Mesh>
+generate_mesh(const TopoDS_Shape &shape, Fineness fineness = Fineness::Coarse) {
+  auto occ_geometry =
+      std::make_shared<netgen::OCCGeometry>(shape, 2); // only 2d mesh now
+  auto mesh = std::make_shared<netgen::Mesh>();
+
   netgen::MeshingParameters mp;
   mp.delaunay2d = true;
-  mp.minh = 1e-4 * diag;
-  mp.maxh = 1e-2 * diag;
-  mp.uselocalh = true;
-  mp.secondorder = false;
-  mp.grading = 0.6;
-  std::ostringstream oss;
-  mp.Print(oss);
-  spdlog::info("Meshing Parameters: \n{}", oss.str());
+  mp.parthread = true;
+  netgen::OCCParameters op;
 
+  // 根据精细度选择参数
+  switch (fineness) {
+  case Fineness::VeryCoarse:
+    mp.curvaturesafety = 1;
+    mp.segmentsperedge = 0.3;
+    mp.grading = 0.7;
+    mp.closeedgefac = 0.5;
+    mp.optsteps3d = 5;
+    op.resthminedgelen = 0.002;
+    op.resthminedgelenenable = true;
+    break;
+  case Fineness::Coarse:
+    mp.curvaturesafety = 1.5;
+    mp.segmentsperedge = 0.5;
+    mp.grading = 0.5;
+    mp.closeedgefac = 1;
+    mp.optsteps3d = 5;
+    op.resthminedgelen = 0.02;
+    op.resthminedgelenenable = true;
+    break;
+  case Fineness::Moderate:
+    mp.curvaturesafety = 2;
+    mp.segmentsperedge = 1;
+    mp.grading = 0.3;
+    mp.closeedgefac = 2;
+    mp.optsteps3d = 5;
+    op.resthminedgelen = 0.2;
+    op.resthminedgelenenable = true;
+    break;
+  case Fineness::Fine:
+    mp.curvaturesafety = 3;
+    mp.segmentsperedge = 2;
+    mp.grading = 0.2;
+    mp.closeedgefac = 3.5;
+    mp.optsteps3d = 5;
+    op.resthminedgelen = 1;
+    op.resthminedgelenenable = true;
+    break;
+  case Fineness::VeryFine:
+    mp.curvaturesafety = 5;
+    mp.segmentsperedge = 3;
+    mp.grading = 0.1;
+    mp.closeedgefac = 5;
+    mp.optsteps3d = 5;
+    op.resthminedgelen = 2;
+    op.resthminedgelenenable = true;
+    break;
+  }
+
+  occ_geometry->SetOCCParameters(op);
+  mesh->SetGeometry(occ_geometry);
+
+  auto result = occ_geometry->GenerateMesh(mesh, mp);
+  if (result != nglib::NG_OK) {
+    spdlog::error("Failed to generate mesh: {}",
+                  to_string(nglib::Ng_Result(result)));
+    return nullptr;
+  }
+
+  return mesh;
+}
+
+bool do_netgen(const TopoDS_Shape &shape, const Fineness fineness,
+               Eigen::MatrixXd &V, Eigen::MatrixXi &F,
+               std::unordered_map<int, std::unordered_set<int>> &face_elems) {
+  using namespace nglib;
   Ng_Init();
-  auto occ_geometry = std::make_shared<netgen::OCCGeometry>();
-  netgen::OCCParameters occ_params;
-  netgen::Mesh mesh;
-  occ_geometry->shape = shape;
-  occ_geometry->changed = 1;
-  occ_geometry->BuildFMap();
-  occ_geometry->CalcBoundingBox();
-  occ_geometry->PrintNrShapes();
-  occ_geometry->FixFaceOrientation();
-  OCCSetLocalMeshSize(*occ_geometry, mesh, mp, occ_params);
+  auto mesh = generate_mesh(shape, fineness);
 
-  mesh.SetGeometry(occ_geometry);
-  occ_geometry->Analyse(mesh, mp);
-  occ_geometry->FindEdges(mesh, mp);
-  occ_geometry->MeshSurface(mesh, mp);
-
-  auto nb_nodes = mesh.GetNP();
-  auto nb_triangles = mesh.GetNSE();
+  auto nb_nodes = mesh->GetNP();
+  auto nb_triangles = mesh->GetNSE();
   spdlog::info("before cleaning: Nodes: {}, Triangles: {}", nb_nodes,
                nb_triangles);
 
-  V.resize(nb_nodes, 3);
-  F.resize(nb_triangles, 3);
+  Eigen::MatrixXd V_Clean(nb_nodes, 3);
+  Eigen::MatrixXi F_Clean(nb_triangles, 3);
 
   for (int i = 1; i <= nb_nodes; i++) {
-    const auto &p = mesh[netgen::PointIndex(i)];
-    V(i - 1, 0) = p[0];
-    V(i - 1, 1) = p[1];
-    V(i - 1, 2) = p[2];
+    const auto &p = mesh->Point(netgen::PointIndex(i));
+    V_Clean(i - 1, 0) = p[0];
+    V_Clean(i - 1, 1) = p[1];
+    V_Clean(i - 1, 2) = p[2];
   }
 
-  for (int i = 1; i <= nb_triangles; i++) {
-    const auto &t = mesh[netgen::SurfaceElementIndex(i)];
+  for (int i = 0; i < nb_triangles; i++) {
+    const auto &t = (*mesh)[netgen::SurfaceElementIndex(i)];
     if (t.GetNP() == 3) {
-      F(i - 1, 0) = t[0] - 1;
-      F(i - 1, 1) = t[1] - 1;
-      F(i - 1, 2) = t[2] - 1;
+      F_Clean(i, 0) = t[0] - 1;
+      F_Clean(i, 1) = t[1] - 1;
+      F_Clean(i, 2) = t[2] - 1;
     } else {
       spdlog::error("Triangle has {} nodes", t.GetNP());
     }
   }
 
+  clean_mesh_after_mesher(V_Clean, F_Clean, V, F);
+  spdlog::info("after cleaning: Nodes: {}, Triangles: {}", V.rows(), F.rows());
+
   Ng_Exit();
   return true;
-}
-
-// 清理网格后，删除重复的顶点(OCC先离散边，再离散面，共享边的顶点会重复#相邻面的数量)
-void clean_mesh_after_mesher(const Eigen::MatrixXd &V, const Eigen::MatrixXi &F,
-                             Eigen::MatrixXd &V_Clean,
-                             Eigen::MatrixXi &F_Clean) {
-
-  constexpr double epsilon = 1e-7;
-  Eigen::VectorXi I, J; // I is the index of the original vertices, J is the
-                        // index of the cleaned vertices
-  igl::remove_duplicate_vertices(V, F, epsilon, V_Clean, I, J, F_Clean);
-  spdlog::info("removed {} duplicate vertices", V.rows() - V_Clean.rows());
 }
 
 } // namespace
@@ -297,6 +344,20 @@ void CADWidget::draw_cad_menu() {
 
     // 添加切换网格算法的按钮
     if (!current_file.empty()) {
+      // 添加切换网格精细度的按钮
+      ImGui::Combo("Mesh Fineness", &current_fineness,
+                   "Very Coarse\0Coarse\0Moderate\0Fine\0Very Fine\0\0");
+      if (netgen_mesh_generated && current_algorithm == NETGEN) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Re-generate Mesh")) {
+          // note: no need to check is previous_fineness == current_fineness, we
+          // always re-generate the mesh
+          shape_to_mesh_netgen(shape, V_netgen, F_netgen);
+          display_model();
+          previous_fineness = current_fineness;
+        }
+      }
+
       if (current_algorithm == OCC) {
         if (ImGui::Button("Switch to NETGEN Mesh", ImVec2(-1, 0))) {
           toggle_mesh_algorithm();
@@ -613,13 +674,8 @@ void CADWidget::shape_to_mesh_occ(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
 
 void CADWidget::shape_to_mesh_netgen(const TopoDS_Shape &shape,
                                      Eigen::MatrixXd &V, Eigen::MatrixXi &F) {
-  const double lineDefl = auto_select_linear_deflection(shape);
-  const double minH = lineDefl * 0.05;
-  const double maxH = lineDefl * 5.5;
-  const double grading = 0.8;
-
   std::unordered_map<int, std::unordered_set<int>> face_elems;
-  do_netgen(shape, lineDefl, minH, maxH, grading, V, F, face_elems);
+  do_netgen(shape, static_cast<Fineness>(current_fineness), V, F, face_elems);
 }
 
 void CADWidget::toggle_mesh_algorithm() {
@@ -627,11 +683,13 @@ void CADWidget::toggle_mesh_algorithm() {
     current_algorithm = NETGEN;
 
     // 如果NETGEN网格尚未生成，则现在生成
-    if (!netgen_mesh_generated) {
+    if (!netgen_mesh_generated || current_fineness != previous_fineness) {
       spdlog::stopwatch sw;
       shape_to_mesh_netgen(shape, V_netgen, F_netgen);
       netgen_mesh_generated = true;
-      spdlog::info("NETGEN mesh time: {:.3f}s", sw);
+      previous_fineness = current_fineness;
+      spdlog::info("NETGEN mesh time with fineness {}: {:.3f}s",
+                   current_fineness, sw);
     }
 
     spdlog::info("Switched to NETGEN mesh");

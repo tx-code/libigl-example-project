@@ -32,7 +32,7 @@ void ImGuiPlugin::init(igl::opengl::glfw::Viewer *_viewer) {
     const char *glsl_version = "#version 330";
     ImGui_ImplGlfw_InitForOpenGL(viewer->window, false);
     ImGui_ImplOpenGL3_Init(glsl_version);
-    ImGui::GetIO().IniFilename = nullptr;
+    // ImGui::GetIO().IniFilename = nullptr;
     ImGui::StyleColorsDark();
     ImGuiStyle &style = ImGui::GetStyle();
     style.FrameRounding = 5.0f;
