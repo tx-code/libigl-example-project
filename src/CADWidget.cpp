@@ -1,4 +1,5 @@
 #include "CADWidget.h"
+
 // OpenCASCADE 头文件
 #include <BRepBndLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -13,12 +14,8 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 // Libigl 头文件
-#include <igl/boundary_loop.h>
 #include <igl/cylinder.h>
 #include <igl/dihedral_angles.h>
-#include <igl/fast_find_self_intersections.h>
-#include <igl/is_edge_manifold.h>
-#include <igl/is_vertex_manifold.h>
 #include <igl/remove_duplicate_vertices.h>
 #include <igl/remove_unreferenced.h>
 #include <igl/unique_simplices.h>
