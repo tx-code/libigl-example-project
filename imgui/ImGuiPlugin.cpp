@@ -9,10 +9,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "ImGuiPlugin.h"
 #include "ImGuiHelpers.h"
+#include "imgui_fonts_droid_sans.h"
 #include <GLFW/glfw3.h>
 #include <igl/project.h>
 #include <imgui.h>
-#include <imgui_fonts_droid_sans.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <iostream>
