@@ -113,6 +113,9 @@ private:
   // cache the bounding box of the model
   Eigen::Vector3d bounding_box_min{-1000, -1000, -1000};
   Eigen::Vector3d bounding_box_max{1000, 1000, 1000};
+
+  // Flag to track if NETGEN meshing has been performed
+  bool netgen_mesh_generated = false;
 };
 
 #endif

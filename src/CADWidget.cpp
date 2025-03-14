@@ -297,8 +297,18 @@ void CADWidget::draw_cad_menu() {
 
     // 添加切换网格算法的按钮
     if (!current_file.empty()) {
-      if (ImGui::Button("Toggle Mesh Algorithm", ImVec2(-1, 0))) {
-        toggle_mesh_algorithm();
+      if (current_algorithm == OCC) {
+        if (ImGui::Button("Switch to NETGEN Mesh", ImVec2(-1, 0))) {
+          toggle_mesh_algorithm();
+        }
+        if (!netgen_mesh_generated) {
+          ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f),
+                             "NETGEN mesh will be generated when switching");
+        }
+      } else {
+        if (ImGui::Button("Switch to OCC Mesh", ImVec2(-1, 0))) {
+          toggle_mesh_algorithm();
+        }
       }
 
       // 显示当前使用的算法
@@ -473,12 +483,12 @@ bool CADWidget::import_step(const std::string &filename) {
   shape = reader.OneShape();
   spdlog::info("Transfer roots time: {:.3f}s", sw);
 
-  // 使用两种算法创建网格
+  // 只使用OCC算法创建网格
   shape_to_mesh_occ(shape, V_occ, F_occ);
   spdlog::info("OCC mesh time: {:.3f}s", sw);
 
-  shape_to_mesh_netgen(shape, V_netgen, F_netgen);
-  spdlog::info("NETGEN mesh time: {:.3f}s", sw);
+  // 重置NETGEN网格生成标志
+  netgen_mesh_generated = false;
 
   // 默认使用OCC算法的结果
   current_algorithm = OCC;
@@ -615,6 +625,15 @@ void CADWidget::shape_to_mesh_netgen(const TopoDS_Shape &shape,
 void CADWidget::toggle_mesh_algorithm() {
   if (current_algorithm == OCC) {
     current_algorithm = NETGEN;
+
+    // 如果NETGEN网格尚未生成，则现在生成
+    if (!netgen_mesh_generated) {
+      spdlog::stopwatch sw;
+      shape_to_mesh_netgen(shape, V_netgen, F_netgen);
+      netgen_mesh_generated = true;
+      spdlog::info("NETGEN mesh time: {:.3f}s", sw);
+    }
+
     spdlog::info("Switched to NETGEN mesh");
   } else {
     current_algorithm = OCC;
@@ -639,10 +658,8 @@ void CADWidget::display_model() {
   }
 
   // 根据当前算法选择要显示的网格数据
-  const Eigen::MatrixXd &V_current =
-      (current_algorithm == OCC) ? V_occ : V_netgen;
-  const Eigen::MatrixXi &F_current =
-      (current_algorithm == OCC) ? F_occ : F_netgen;
+  Eigen::MatrixXd V_current;
+  Eigen::MatrixXi F_current;
 
   // we only show one mesh at a time
   if (current_algorithm == OCC) {
@@ -650,11 +667,27 @@ void CADWidget::display_model() {
     viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
     viewer->data(occ_mesh_id).compute_normals();
     viewer->data(occ_mesh_id).set_face_based(true);
+    V_current = V_occ;
+    F_current = F_occ;
   } else {
-    viewer->selected_data_index = viewer->mesh_index(netgen_mesh_id);
-    viewer->data(netgen_mesh_id).set_mesh(V_netgen, F_netgen);
-    viewer->data(netgen_mesh_id).compute_normals();
-    viewer->data(netgen_mesh_id).set_face_based(true);
+    // 确保NETGEN网格已经生成
+    if (!netgen_mesh_generated) {
+      spdlog::warn("NETGEN mesh not generated yet, switching back to OCC");
+      current_algorithm = OCC;
+      viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
+      viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
+      viewer->data(occ_mesh_id).compute_normals();
+      viewer->data(occ_mesh_id).set_face_based(true);
+      V_current = V_occ;
+      F_current = F_occ;
+    } else {
+      viewer->selected_data_index = viewer->mesh_index(netgen_mesh_id);
+      viewer->data(netgen_mesh_id).set_mesh(V_netgen, F_netgen);
+      viewer->data(netgen_mesh_id).compute_normals();
+      viewer->data(netgen_mesh_id).set_face_based(true);
+      V_current = V_netgen;
+      F_current = F_netgen;
+    }
   }
 
   // 更新mesh检查器
