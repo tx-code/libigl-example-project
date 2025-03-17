@@ -62,6 +62,10 @@ bool NetgenMesher::doNetgenMesh(
     const TopoDS_Shape &shape, Eigen::MatrixXd &V, Eigen::MatrixXi &F,
     std::unordered_map<int, std::unordered_set<int>> &face_elems) {
   using namespace nglib;
+
+  spdlog::info("================================================");
+  spdlog::info("Do Netgen meshing...");
+  spdlog::info("================================================");
   Ng_Init();
 
   // Create OCC geometry for Netgen
@@ -73,8 +77,10 @@ bool NetgenMesher::doNetgenMesh(
   // General parameters
   mp.delaunay2d = true;
   mp.parthread = true;
-  mp.maxh = 1000;
+  mp.minh = autoSelectLinearDeflection(shape);
+  mp.maxh = mp.minh * 1000;
   netgen::OCCParameters op;
+  op.resthminedgelenenable = true;
 
   // Set parameters based on fineness
   switch (mFineness) {
@@ -84,8 +90,7 @@ bool NetgenMesher::doNetgenMesh(
     mp.grading = 0.7;
     mp.closeedgefac = 0.5;
     mp.optsteps3d = 5;
-    op.resthminedgelen = 0.002;
-    op.resthminedgelenenable = true;
+    op.resthminedgelen = 2;
     break;
   case Fineness::Coarse:
     mp.curvaturesafety = 1.5;
@@ -93,8 +98,7 @@ bool NetgenMesher::doNetgenMesh(
     mp.grading = 0.5;
     mp.closeedgefac = 1;
     mp.optsteps3d = 5;
-    op.resthminedgelen = 0.02;
-    op.resthminedgelenenable = true;
+    op.resthminedgelen = 1;
     break;
   case Fineness::Moderate:
     mp.curvaturesafety = 2;
@@ -103,7 +107,6 @@ bool NetgenMesher::doNetgenMesh(
     mp.closeedgefac = 2;
     mp.optsteps3d = 5;
     op.resthminedgelen = 0.2;
-    op.resthminedgelenenable = true;
     break;
   case Fineness::Fine:
     mp.curvaturesafety = 3;
@@ -111,8 +114,7 @@ bool NetgenMesher::doNetgenMesh(
     mp.grading = 0.2;
     mp.closeedgefac = 3.5;
     mp.optsteps3d = 5;
-    op.resthminedgelen = 1;
-    op.resthminedgelenenable = true;
+    op.resthminedgelen = 0.02;
     break;
   case Fineness::VeryFine:
     mp.curvaturesafety = 5;
@@ -120,10 +122,12 @@ bool NetgenMesher::doNetgenMesh(
     mp.grading = 0.1;
     mp.closeedgefac = 5;
     mp.optsteps3d = 5;
-    op.resthminedgelen = 2;
-    op.resthminedgelenenable = true;
+    op.resthminedgelen = 0.002;
     break;
   }
+  std::stringstream ss;
+  ss << "Meshing parameters: " << mp;
+  spdlog::info(ss.str());
 
   occ_geometry->SetOCCParameters(op);
   mesh->SetGeometry(occ_geometry);
