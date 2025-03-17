@@ -7,30 +7,13 @@
 
 class NetgenMesher : public IMesher {
 public:
-  enum class Fineness {
-    VeryCoarse = 0,
-    Coarse = 1,
-    Moderate = 2,
-    Fine = 3,
-    VeryFine = 4
-  };
-
-  NetgenMesher(Fineness fineness = Fineness::Fine);
+  NetgenMesher();
   ~NetgenMesher() override = default;
 
   bool generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &vertices,
                     Eigen::MatrixXi &faces) override;
 
   std::string getName() const override { return "NETGEN"; }
-
-  // Set mesh fineness
-  void setFineness(Fineness fineness) { mFineness = fineness; }
-
-  // Get current fineness
-  Fineness getFineness() const { return mFineness; }
-
-private:
-  Fineness mFineness;
 
   // Helper method to generate mesh using Netgen
   bool

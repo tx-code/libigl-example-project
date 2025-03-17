@@ -4,6 +4,8 @@
 #include "IMesher.h"
 #include <Bnd_Box.hxx>
 
+class IMeshTools_Parameters;
+
 class OCCMesher : public IMesher {
 public:
   OCCMesher();
@@ -13,6 +15,10 @@ public:
                     Eigen::MatrixXi &faces) override;
 
   std::string getName() const override { return "OCC"; }
+
+private:
+  void getMeshingParameters(IMeshTools_Parameters &mp,
+                            const TopoDS_Shape &shape) const;
 };
 
 #endif // OCCMESHER_H

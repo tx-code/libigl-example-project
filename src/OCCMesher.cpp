@@ -27,11 +27,7 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
 
   // Create mesh parameters
   IMeshTools_Parameters params;
-  params.Deflection = autoSelectLinearDeflection(shape);
-  params.Angle = 0.5;
-  params.Relative = true;
-  params.MinSize = params.Deflection * 0.01;
-  params.InParallel = true; // enable the parallel mode
+  getMeshingParameters(params, shape);
 
   try {
     // Note: will automatically call Perform()
@@ -123,4 +119,34 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
   spdlog::info("OCC meshing completed in {:.3f}s", sw);
 
   return true;
+}
+
+void OCCMesher::getMeshingParameters(IMeshTools_Parameters &mp,
+                                     const TopoDS_Shape &shape) const {
+  mp.MinSize = autoSelectLinearDeflection(shape);
+  mp.Relative = true;
+  mp.InParallel = true;
+
+  switch (mFineness) {
+  case Fineness::VeryCoarse:
+    mp.Deflection = mp.MinSize;
+    mp.Angle = 0.5;
+    break;
+  case Fineness::Coarse:
+    mp.Deflection = mp.MinSize * 0.1;
+    mp.Angle = 0.4;
+    break;
+  case Fineness::Moderate:
+    mp.Deflection = mp.MinSize * 0.05;
+    mp.Angle = 0.3;
+    break;
+  case Fineness::Fine:
+    mp.Deflection = mp.MinSize * 0.01;
+    mp.Angle = 0.2;
+    break;
+  case Fineness::VeryFine:
+    mp.Deflection = mp.MinSize * 0.005;
+    mp.Angle = 0.1;
+    break;
+  }
 }

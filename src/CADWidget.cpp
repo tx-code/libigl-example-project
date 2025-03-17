@@ -32,7 +32,7 @@ CADWidget::CADWidget() {
 
   // Initialize meshers
   occMesher = std::make_shared<OCCMesher>();
-  netgenMesher = std::make_shared<NetgenMesher>(NetgenMesher::Fineness::Fine);
+  netgenMesher = std::make_shared<NetgenMesher>();
 
   // Set default mesher
   currentMesher = occMesher;
@@ -161,9 +161,9 @@ void CADWidget::draw_cad_menu() {
       // 添加切换网格精细度的按钮
       ImGui::Combo("Mesh Fineness", &current_fineness,
                    "Very Coarse\0Coarse\0Moderate\0Fine\0Very Fine\0\0");
-      if (netgen_mesh_generated && currentMesher->getName() == "NETGEN") {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Re-generate Mesh")) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Re-generate Mesh")) {
+        if (currentMesher->getName() == "NETGEN") {
           // Update Netgen mesher fineness
           auto netgenMesherPtr =
               std::dynamic_pointer_cast<NetgenMesher>(netgenMesher);
@@ -174,9 +174,20 @@ void CADWidget::draw_cad_menu() {
 
           // Re-generate mesh
           netgenMesher->generateMesh(shape, V_netgen, F_netgen);
-          display_model();
-          previous_fineness = current_fineness;
+        } else if (currentMesher->getName() == "OCC") {
+          auto occMesherPtr = std::dynamic_pointer_cast<OCCMesher>(occMesher);
+          if (occMesherPtr) {
+            occMesherPtr->setFineness(
+                static_cast<OCCMesher::Fineness>(current_fineness));
+          }
+
+          // Re-generate mesh
+          occMesher->generateMesh(shape, V_occ, F_occ);
         }
+
+        // Update mesh
+        display_model();
+        previous_fineness = current_fineness;
       }
 
       if (currentMesher->getName() == "OCC") {

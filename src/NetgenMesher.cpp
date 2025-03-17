@@ -43,7 +43,7 @@ std::string to_string(const nglib::Ng_Result &res) {
 
 } // namespace
 
-NetgenMesher::NetgenMesher(Fineness fineness) : mFineness(fineness) {
+NetgenMesher::NetgenMesher() {
   // Constructor implementation
 }
 
