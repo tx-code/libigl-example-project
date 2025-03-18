@@ -47,6 +47,7 @@ find_package(OpenCASCADE REQUIRED)
 find_package(nfd CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Netgen CONFIG REQUIRED)
+find_package(TBB CONFIG REQUIRED)
 
 add_library(imguiext
     STATIC
@@ -103,4 +104,5 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     ${OpenCASCADE_LIBRARIES}
     nglib
     ngcore
+    TBB::tbb
 )

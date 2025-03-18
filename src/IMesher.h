@@ -55,7 +55,7 @@ protected:
   void isotropicRemesh();
 
 protected:
-  Fineness mFineness = Fineness::Fine;
+  Fineness mFineness = Fineness::Moderate;
 };
 
 #endif // IMESHER_H
