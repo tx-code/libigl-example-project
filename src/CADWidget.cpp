@@ -173,7 +173,10 @@ void CADWidget::draw_cad_menu() {
           }
 
           // Re-generate mesh
-          netgenMesher->generateMesh(shape, V_netgen, F_netgen);
+          if (netgenMesher->perform(shape)) {
+            V_netgen = netgenMesher->V;
+            F_netgen = netgenMesher->F;
+          }
         } else if (currentMesher->getName() == "OCC") {
           auto occMesherPtr = std::dynamic_pointer_cast<OCCMesher>(occMesher);
           if (occMesherPtr) {
@@ -182,7 +185,10 @@ void CADWidget::draw_cad_menu() {
           }
 
           // Re-generate mesh
-          occMesher->generateMesh(shape, V_occ, F_occ);
+          if (occMesher->perform(shape)) {
+            V_occ = occMesher->V;
+            F_occ = occMesher->F;
+          }
         }
 
         // Update mesh
@@ -376,7 +382,10 @@ bool CADWidget::import_step(const std::string &filename) {
   spdlog::info("Transfer roots time: {:.3f}s", sw);
 
   // 使用OCC算法创建网格
-  occMesher->generateMesh(shape, V_occ, F_occ);
+  if (occMesher->perform(shape)) {
+    V_occ = occMesher->V;
+    F_occ = occMesher->F;
+  }
   spdlog::info("OCC mesh time: {:.3f}s", sw);
 
   // 重置NETGEN网格生成标志
@@ -422,11 +431,14 @@ void CADWidget::toggle_mesh_algorithm() {
       }
 
       // Generate mesh
-      netgenMesher->generateMesh(shape, V_netgen, F_netgen);
-      netgen_mesh_generated = true;
-      previous_fineness = current_fineness;
-      spdlog::info("NETGEN mesh time with fineness {}: {:.3f}s",
-                   current_fineness, sw);
+      if (netgenMesher->perform(shape)) {
+        V_netgen = netgenMesher->V;
+        F_netgen = netgenMesher->F;
+        netgen_mesh_generated = true;
+        previous_fineness = current_fineness;
+        spdlog::info("NETGEN mesh time with fineness {}: {:.3f}s",
+                     current_fineness, sw);
+      }
     }
 
     spdlog::info("Switched to NETGEN mesh");

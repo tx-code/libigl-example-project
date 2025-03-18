@@ -21,8 +21,7 @@ OCCMesher::OCCMesher() {
   // Constructor implementation
 }
 
-bool OCCMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
-                             Eigen::MatrixXi &F) {
+bool OCCMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
   spdlog::stopwatch sw;
 
   // Create mesh parameters
@@ -65,21 +64,30 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
   // Adjust matrix sizes
   Eigen::MatrixXd V_Uncleaned;
   Eigen::MatrixXi F_Uncleaned;
+  Eigen::VectorXi C_Uncleaned;
   V_Uncleaned.resize(total_vertices, 3);
   F_Uncleaned.resize(total_triangles, 3);
+  C_Uncleaned.resize(total_triangles);
 
   // Fill matrices
   int vertex_index = 0;
   int face_index = 0;
   int face_count = 0;
 
-  for (explorer.Init(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-    TopoDS_Face face = TopoDS::Face(explorer.Current());
+  TopTools_IndexedMapOfShape fmap;
+  TopExp::MapShapes(shape, TopAbs_FACE, fmap);
+  for (int fid = 1; fid <= fmap.Extent(); ++fid) {
+    TopoDS_Face face = TopoDS::Face(fmap(fid));
     TopLoc_Location loc;
 
     Handle(Poly_Triangulation) triangulation =
         BRep_Tool::Triangulation(face, loc);
+    spdlog::info("Face {}: {} nodes, {} triangles", fid,
+                 triangulation->NbNodes(), triangulation->NbTriangles());
+
     if (!triangulation.IsNull()) {
+      C_Uncleaned[face_index] = fid;
+
       int offset = face_vertex_offsets[face_count++];
 
       // Get vertices
@@ -111,11 +119,18 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
     }
   }
 
-  // Clean the mesh (remove duplicate vertices)
-  cleanMesh(V_Uncleaned, F_Uncleaned, V, F);
+  if (autoClean) {
+    // Clean the mesh (remove duplicate vertices)
+    cleanMesh(V_Uncleaned, F_Uncleaned, V, F);
+    spdlog::info("OCC mesh info after cleaning: {} vertices, {} triangles",
+                 V.rows(), F.rows());
+  } else {
+    // just swap
+    V.swap(V_Uncleaned);
+    F.swap(F_Uncleaned);
+  }
+  C.swap(C_Uncleaned);
 
-  spdlog::info("OCC mesh info after cleaning: {} vertices, {} triangles",
-               V.rows(), F.rows());
   spdlog::info("OCC meshing completed in {:.3f}s", sw);
 
   return true;

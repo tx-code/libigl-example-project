@@ -16,6 +16,9 @@ namespace nglib {
 #include <nglib.h>
 }
 
+#include <igl/bfs_orient.h>
+#include <igl/centroid.h>
+
 #pragma warning(pop)
 
 namespace {
@@ -47,19 +50,19 @@ NetgenMesher::NetgenMesher() {
   // Constructor implementation
 }
 
-bool NetgenMesher::generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &V,
-                                Eigen::MatrixXi &F) {
+bool NetgenMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
   spdlog::stopwatch sw;
 
   std::unordered_map<int, std::unordered_set<int>> face_elems;
-  bool result = doNetgenMesh(shape, V, F, face_elems);
+  bool result = doNetgenMesh(shape, autoClean, V, F, face_elems);
 
   spdlog::info("NETGEN meshing completed in {:.3f}s", sw);
   return result;
 }
 
 bool NetgenMesher::doNetgenMesh(
-    const TopoDS_Shape &shape, Eigen::MatrixXd &V, Eigen::MatrixXi &F,
+    const TopoDS_Shape &shape, bool autoClean, Eigen::MatrixXd &V,
+    Eigen::MatrixXi &F,
     std::unordered_map<int, std::unordered_set<int>> &face_elems) {
   using namespace nglib;
 
@@ -148,6 +151,7 @@ bool NetgenMesher::doNetgenMesh(
 
   Eigen::MatrixXd V_Uncleaned(nb_nodes, 3);
   Eigen::MatrixXi F_Uncleaned(nb_triangles, 3);
+  Eigen::VectorXi C_Uncleaned(nb_triangles);
 
   for (int i = 1; i <= nb_nodes; i++) {
     const auto &p = mesh->Point(netgen::PointIndex(i));
@@ -158,6 +162,7 @@ bool NetgenMesher::doNetgenMesh(
 
   for (int i = 0; i < nb_triangles; i++) {
     const auto &t = (*mesh)[netgen::SurfaceElementIndex(i)];
+    C_Uncleaned(i) = t.GetIndex();
     if (t.GetNP() == 3) {
       F_Uncleaned(i, 0) = t[0] - 1;
       F_Uncleaned(i, 1) = t[1] - 1;
@@ -167,11 +172,18 @@ bool NetgenMesher::doNetgenMesh(
     }
   }
 
-  // Clean the mesh (remove duplicate vertices)
-  cleanMesh(V_Uncleaned, F_Uncleaned, V, F);
+  if (autoClean) {
+    // Clean the mesh (remove duplicate vertices)
+    cleanMesh(V_Uncleaned, F_Uncleaned, V, F);
 
-  spdlog::info("NETGEN mesh after cleaning: Nodes: {}, Triangles: {}", V.rows(),
-               F.rows());
+    spdlog::info("NETGEN mesh after cleaning: Nodes: {}, Triangles: {}",
+                 V.rows(), F.rows());
+  } else {
+    // just swap
+    V.swap(V_Uncleaned);
+    F.swap(F_Uncleaned);
+  }
+  C.swap(C_Uncleaned);
 
   Ng_Exit();
   return true;

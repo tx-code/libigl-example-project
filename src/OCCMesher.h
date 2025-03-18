@@ -11,10 +11,10 @@ public:
   OCCMesher();
   ~OCCMesher() override = default;
 
-  bool generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &vertices,
-                    Eigen::MatrixXi &faces) override;
-
   std::string getName() const override { return "OCC"; }
+
+protected:
+  bool generateMesh(const TopoDS_Shape &shape, bool autoClean) override;
 
 private:
   void getMeshingParameters(IMeshTools_Parameters &mp,

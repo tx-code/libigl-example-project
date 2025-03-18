@@ -11,6 +11,10 @@
 
 #include <spdlog/spdlog.h>
 
+bool IMesher::perform(const TopoDS_Shape &shape, bool autoClean) {
+  return generateMesh(shape, autoClean);
+}
+
 std::shared_ptr<IMesher> IMesher::create(const std::string &mesherName) {
   if (mesherName == "OCC") {
     return std::make_shared<OCCMesher>();

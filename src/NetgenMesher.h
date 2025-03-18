@@ -10,15 +10,15 @@ public:
   NetgenMesher();
   ~NetgenMesher() override = default;
 
-  bool generateMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &vertices,
-                    Eigen::MatrixXi &faces) override;
-
   std::string getName() const override { return "NETGEN"; }
+
+protected:
+  bool generateMesh(const TopoDS_Shape &shape, bool autoClean) override;
 
   // Helper method to generate mesh using Netgen
   bool
-  doNetgenMesh(const TopoDS_Shape &shape, Eigen::MatrixXd &vertices,
-               Eigen::MatrixXi &faces,
+  doNetgenMesh(const TopoDS_Shape &shape, bool autoClean,
+               Eigen::MatrixXd &vertices, Eigen::MatrixXi &faces,
                std::unordered_map<int, std::unordered_set<int>> &face_elems);
 };
 
