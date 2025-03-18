@@ -42,9 +42,10 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
   int total_triangles = 0;
   std::vector<int> face_vertex_offsets;
 
-  TopExp_Explorer explorer;
-  for (explorer.Init(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-    TopoDS_Face face = TopoDS::Face(explorer.Current());
+  TopTools_IndexedMapOfShape fmap;
+  TopExp::MapShapes(shape, TopAbs_FACE, fmap);
+  for (int fid = 1; fid <= fmap.Extent(); ++fid) {
+    TopoDS_Face face = TopoDS::Face(fmap(fid));
     TopLoc_Location loc;
 
     Handle(Poly_Triangulation) triangulation =
@@ -74,8 +75,6 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
   int face_index = 0;
   int face_count = 0;
 
-  TopTools_IndexedMapOfShape fmap;
-  TopExp::MapShapes(shape, TopAbs_FACE, fmap);
   for (int fid = 1; fid <= fmap.Extent(); ++fid) {
     TopoDS_Face face = TopoDS::Face(fmap(fid));
     TopLoc_Location loc;
@@ -86,8 +85,6 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
                  triangulation->NbNodes(), triangulation->NbTriangles());
 
     if (!triangulation.IsNull()) {
-      C_Uncleaned[face_index] = fid;
-
       int offset = face_vertex_offsets[face_count++];
 
       // Get vertices
@@ -111,6 +108,7 @@ bool OCCMesher::generateMesh(const TopoDS_Shape &shape, bool autoClean) {
           std::swap(n2, n3);
         }
 
+        C_Uncleaned[face_index] = fid;
         F_Uncleaned(face_index, 0) = offset + n1 - 1;
         F_Uncleaned(face_index, 1) = offset + n2 - 1;
         F_Uncleaned(face_index, 2) = offset + n3 - 1;

@@ -65,6 +65,7 @@ target_link_libraries(
     imguizmo::imguizmo)
 
 add_executable(${PROJECT_NAME}
+    src/copyleft/IsotropicRemesh.cpp
     src/IMesher.cpp
     src/OCCMesher.cpp
     src/NetgenMesher.cpp

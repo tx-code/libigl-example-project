@@ -173,9 +173,8 @@ void CADWidget::draw_cad_menu() {
           }
 
           // Re-generate mesh
-          if (netgenMesher->perform(shape)) {
-            V_netgen = netgenMesher->V;
-            F_netgen = netgenMesher->F;
+          if (!netgenMesher->perform(shape)) {
+            spdlog::error("Failed to re-generate mesh [Netgen]");
           }
         } else if (currentMesher->getName() == "OCC") {
           auto occMesherPtr = std::dynamic_pointer_cast<OCCMesher>(occMesher);
@@ -185,9 +184,8 @@ void CADWidget::draw_cad_menu() {
           }
 
           // Re-generate mesh
-          if (occMesher->perform(shape)) {
-            V_occ = occMesher->V;
-            F_occ = occMesher->F;
+          if (!occMesher->perform(shape)) {
+            spdlog::error("Failed to re-generate mesh [OCC]");
           }
         }
 
@@ -212,6 +210,11 @@ void CADWidget::draw_cad_menu() {
 
       // 显示当前使用的算法
       ImGui::Text("Current Algorithm: %s", currentMesher->getName().c_str());
+    }
+
+    // 添加 TopoFace ID 着色选项
+    if (ImGui::Checkbox("Color by TopoFace ID", &color_by_topoface)) {
+      update_mesh_colors();
     }
   }
 }
@@ -253,7 +256,6 @@ void CADWidget::draw_tool_cutter() {
       viewer->data(tool_id).clear();
     }
     viewer->data(tool_id).set_mesh(V, F);
-    viewer->data(tool_id).compute_normals();
     // white color
     viewer->data(tool_id).set_colors(Eigen::RowVector3d(1, 1, 1));
   }
@@ -318,14 +320,10 @@ void CADWidget::draw_model_info() {
                 (bounding_box_max.z() - bounding_box_min.z()));
   }
 
-  const Eigen::MatrixXd &V_current =
-      (currentMesher->getName() == "OCC") ? V_occ : V_netgen;
-  const Eigen::MatrixXi &F_current =
-      (currentMesher->getName() == "OCC") ? F_occ : F_netgen;
   // Mesh info
   if (ImGui::CollapsingHeader("Mesh Info")) {
-    ImGui::Text("Vertices: %ld", V_current.rows());
-    ImGui::Text("Faces: %ld", F_current.rows());
+    ImGui::Text("Vertices: %ld", currentMesher->V.rows());
+    ImGui::Text("Faces: %ld", currentMesher->F.rows());
   }
 
   // Inspection
@@ -382,9 +380,8 @@ bool CADWidget::import_step(const std::string &filename) {
   spdlog::info("Transfer roots time: {:.3f}s", sw);
 
   // 使用OCC算法创建网格
-  if (occMesher->perform(shape)) {
-    V_occ = occMesher->V;
-    F_occ = occMesher->F;
+  if (!occMesher->perform(shape)) {
+    spdlog::error("Failed to generate mesh [OCC]");
   }
   spdlog::info("OCC mesh time: {:.3f}s", sw);
 
@@ -432,8 +429,6 @@ void CADWidget::toggle_mesh_algorithm() {
 
       // Generate mesh
       if (netgenMesher->perform(shape)) {
-        V_netgen = netgenMesher->V;
-        F_netgen = netgenMesher->F;
         netgen_mesh_generated = true;
         previous_fineness = current_fineness;
         spdlog::info("NETGEN mesh time with fineness {}: {:.3f}s",
@@ -464,41 +459,28 @@ void CADWidget::display_model() {
     viewer->data(netgen_mesh_id).clear();
   }
 
-  // 根据当前算法选择要显示的网格数据
-  Eigen::MatrixXd V_current;
-  Eigen::MatrixXi F_current;
-
   // we only show one mesh at a time
   if (currentMesher->getName() == "OCC") {
     viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
-    viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
-    viewer->data(occ_mesh_id).compute_normals();
+    viewer->data(occ_mesh_id).set_mesh(currentMesher->V, currentMesher->F);
     viewer->data(occ_mesh_id).set_face_based(true);
-    V_current = V_occ;
-    F_current = F_occ;
   } else {
     // 确保NETGEN网格已经生成
     if (!netgen_mesh_generated) {
       spdlog::warn("NETGEN mesh not generated yet, switching back to OCC");
       currentMesher = occMesher;
       viewer->selected_data_index = viewer->mesh_index(occ_mesh_id);
-      viewer->data(occ_mesh_id).set_mesh(V_occ, F_occ);
-      viewer->data(occ_mesh_id).compute_normals();
+      viewer->data(occ_mesh_id).set_mesh(currentMesher->V, currentMesher->F);
       viewer->data(occ_mesh_id).set_face_based(true);
-      V_current = V_occ;
-      F_current = F_occ;
     } else {
       viewer->selected_data_index = viewer->mesh_index(netgen_mesh_id);
-      viewer->data(netgen_mesh_id).set_mesh(V_netgen, F_netgen);
-      viewer->data(netgen_mesh_id).compute_normals();
+      viewer->data(netgen_mesh_id).set_mesh(currentMesher->V, currentMesher->F);
       viewer->data(netgen_mesh_id).set_face_based(true);
-      V_current = V_netgen;
-      F_current = F_netgen;
     }
   }
 
   // 更新mesh检查器
-  meshInspector.setMesh(V_current, F_current);
+  meshInspector.setMesh(currentMesher->V, currentMesher->F);
 
   reset_view();
 }
@@ -510,7 +492,58 @@ void CADWidget::reset_inspection_cache() {
 
 void CADWidget::reset_view() {
   // 根据当前算法选择要对齐的网格数据
-  const Eigen::MatrixXd &V_current =
-      (currentMesher->getName() == "OCC") ? V_occ : V_netgen;
+  const Eigen::MatrixXd &V_current = currentMesher->V;
   viewer->core().align_camera_center(V_current);
+}
+
+void CADWidget::update_mesh_colors() {
+  if (!viewer || !viewer->data().F.rows())
+    return;
+
+  auto &data = viewer->data();
+  if (color_by_topoface) {
+    // 根据当前使用的网格选择对应的 TopoFace ID 数组
+    const Eigen::VectorXi &face_ids = currentMesher->C;
+
+    if (face_ids.size() > 0) {
+      data.face_based = true;
+
+      // 找到最大的TopoFace ID用于颜色映射
+      double maxId = face_ids.maxCoeff();
+
+      if (maxId > 0) {
+        // 为每个面生成颜色
+        Eigen::MatrixXd colors(data.F.rows(), 3);
+        for (int i = 0; i < data.F.rows(); i++) {
+          if (i < face_ids.size()) {
+            // 使用HSV颜色空间，将ID映射到色相
+            double hue = face_ids(i) / (double)maxId;
+            // 转换HSV到RGB (简化版本，假设S=V=1)
+            double h = hue * 6.0;
+            double x = 1.0 - std::abs(std::fmod(h, 2.0) - 1.0);
+            Eigen::RowVector3d rgb;
+            if (h < 1.0)
+              rgb << 1.0, x, 0.0;
+            else if (h < 2.0)
+              rgb << x, 1.0, 0.0;
+            else if (h < 3.0)
+              rgb << 0.0, 1.0, x;
+            else if (h < 4.0)
+              rgb << 0.0, x, 1.0;
+            else if (h < 5.0)
+              rgb << x, 0.0, 1.0;
+            else
+              rgb << 1.0, 0.0, x;
+            colors.row(i) = rgb;
+          } else {
+            colors.row(i) = Eigen::RowVector3d(1.0, 1.0, 1.0); // 默认白色
+          }
+        }
+        data.set_colors(colors);
+      }
+    }
+  } else {
+    // 恢复默认颜色
+    data.set_colors(Eigen::RowVector3d(1.0, 1.0, 1.0));
+  }
 }

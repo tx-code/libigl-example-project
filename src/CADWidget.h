@@ -46,10 +46,8 @@ private:
 
   std::string current_file;
 
-  Eigen::MatrixXd V_occ, V_netgen;
-  Eigen::MatrixXi F_occ, F_netgen;
-
   // Meshers
+  // the mesher also stores the mesh data
   std::shared_ptr<IMesher> occMesher;
   std::shared_ptr<IMesher> netgenMesher;
   std::shared_ptr<IMesher> currentMesher;
@@ -58,12 +56,14 @@ private:
   int netgen_mesh_id = -1;
 
   bool show_model_info = true;
+  bool color_by_topoface = false; // 控制是否按 TopoFace ID 着色的标志
 
   // 添加mesh检查器
   MeshInspector meshInspector;
 
   void draw_cad_menu();
   void draw_model_info();
+  void update_mesh_colors(); // 更新网格颜色的方法
 
   // cache the bounding box of the model
   Eigen::Vector3d bounding_box_min{-1000, -1000, -1000};
