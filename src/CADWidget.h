@@ -26,6 +26,8 @@ public:
 
   void draw() override;
 
+  bool mouse_down(int button, int modifier) override;
+
   void open_dialog_load_step();
 
   bool import_step(const std::string &filename);

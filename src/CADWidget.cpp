@@ -20,6 +20,7 @@
 
 // Libigl 头文件
 #include <igl/cylinder.h>
+#include <igl/unproject_onto_mesh.h>
 #include <igl/writeOBJ.h>
 
 #include <filesystem>
@@ -70,6 +71,23 @@ void CADWidget::draw() {
 
   ImGui::PopItemWidth();
   ImGui::End();
+}
+
+bool CADWidget::mouse_down(int button, int modifier) {
+  int fid;
+  Eigen::Vector3f bc;
+  // Cast a ray in the view direction starting from the mouse position
+  double x = viewer->current_mouse_x;
+  double y = viewer->core().viewport(3) - viewer->current_mouse_y;
+  if (igl::unproject_onto_mesh(Eigen::Vector2f(x, y), viewer->core().view,
+                               viewer->core().proj, viewer->core().viewport,
+                               currentMesher->V, currentMesher->F, fid, bc)) {
+    spdlog::info("Hit facet {} with topo face id {}", fid,
+                 currentMesher->C(fid, 0));
+    return true;
+  }
+  spdlog::info("No hit");
+  return false;
 }
 
 // 在随机位置生成指定直径和长度的圆柱体，轴线朝向z轴
