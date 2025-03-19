@@ -41,6 +41,9 @@ public:
 
   void draw_tool_cutter();
 
+  // 保存网格到OBJ文件
+  void save_mesh_to_obj();
+
 private:
   TopoDS_Shape shape;
 

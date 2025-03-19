@@ -20,7 +20,9 @@
 
 // Libigl 头文件
 #include <igl/cylinder.h>
+#include <igl/writeOBJ.h>
 
+#include <filesystem>
 #include <imgui.h>
 #include <nfd.h>
 #include <spdlog/spdlog.h>
@@ -154,6 +156,7 @@ void CADWidget::draw_cad_menu() {
     ImGui::SameLine(0, p);
     if (ImGui::Button("Save##CAD", ImVec2((w - p) / 2.f, 0))) {
       // viewer->open_dialog_save_mesh();
+      save_mesh_to_obj();
     }
 
     // 添加切换网格算法的按钮
@@ -546,4 +549,99 @@ void CADWidget::update_mesh_colors() {
     // 恢复默认颜色
     data.set_colors(Eigen::RowVector3d(1.0, 1.0, 1.0));
   }
+}
+
+void CADWidget::save_mesh_to_obj() {
+  if (current_file.empty()) {
+    spdlog::error("No CAD model loaded, cannot save mesh");
+    return;
+  }
+
+  // 使用std::filesystem获取基本文件名
+  std::filesystem::path file_path(current_file);
+  std::string base_filename = file_path.stem().string();
+
+  // 初始化NFD
+  NFD_Init();
+
+  // 让用户选择目标文件夹
+  nfdu8char_t *outPath = nullptr;
+  nfdresult_t result = NFD_PickFolderU8(&outPath, nullptr);
+
+  if (result == NFD_OKAY) {
+    std::filesystem::path output_dir(outPath);
+
+    // 使用增量编号命名方式来保存文件
+    int counter = 0;
+
+    // OCC网格文件路径
+    std::filesystem::path occ_file_path;
+    std::string occ_output_path;
+
+    // 尝试找到一个不存在的文件名
+    do {
+      std::string suffix = counter == 0
+                               ? ".occ.obj"
+                               : "_" + std::to_string(counter) + ".occ.obj";
+      occ_file_path = output_dir / (base_filename + suffix);
+      counter++;
+    } while (std::filesystem::exists(occ_file_path) &&
+             counter < 1000); // 防止无限循环
+
+    occ_output_path = occ_file_path.string();
+
+    // 重置计数器
+    counter = 0;
+
+    // Netgen网格文件路径
+    std::filesystem::path netgen_file_path;
+    std::string netgen_output_path;
+
+    // 尝试找到一个不存在的文件名
+    do {
+      std::string suffix = counter == 0
+                               ? ".netgen.obj"
+                               : "_" + std::to_string(counter) + ".netgen.obj";
+      netgen_file_path = output_dir / (base_filename + suffix);
+      counter++;
+    } while (std::filesystem::exists(netgen_file_path) &&
+             counter < 1000); // 防止无限循环
+
+    netgen_output_path = netgen_file_path.string();
+
+    // 保存OCC网格
+    if (occMesher->V.rows() > 0 && occMesher->F.rows() > 0) {
+      if (igl::writeOBJ(occ_output_path, occMesher->V, occMesher->F)) {
+        // 使用文件名部分而非完整路径，避免中文路径乱码问题
+        spdlog::info("OCC mesh saved to {}", occ_file_path.filename().string());
+      } else {
+        spdlog::error("Failed to save OCC mesh");
+      }
+    } else {
+      spdlog::warn("OCC mesh is empty, nothing to save");
+    }
+
+    // 保存Netgen网格
+    if (netgen_mesh_generated && netgenMesher->V.rows() > 0 &&
+        netgenMesher->F.rows() > 0) {
+      if (igl::writeOBJ(netgen_output_path, netgenMesher->V, netgenMesher->F)) {
+        // 使用文件名部分而非完整路径，避免中文路径乱码问题
+        spdlog::info("Netgen mesh saved to {}",
+                     netgen_file_path.filename().string());
+      } else {
+        spdlog::error("Failed to save Netgen mesh");
+      }
+    } else {
+      spdlog::warn("Netgen mesh has not been generated yet or is empty, "
+                   "nothing to save");
+    }
+
+    NFD_FreePathU8(outPath);
+  } else if (result == NFD_CANCEL) {
+    spdlog::info("User canceled the folder selection dialog");
+  } else {
+    spdlog::error("Error: {}", NFD_GetError());
+  }
+
+  NFD_Quit();
 }
