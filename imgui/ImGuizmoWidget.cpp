@@ -41,7 +41,9 @@ void ImGuizmoWidget::draw() {
   const float diff = (T - T0).array().abs().maxCoeff();
   // Only call if actually changed; otherwise, triggers on all mouse events
   if (diff > 1e-7) {
-    callback(T);
+    if (callback) {
+      callback(T);
+    }
   }
 }
 } // namespace imgui
