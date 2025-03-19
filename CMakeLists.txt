@@ -67,6 +67,7 @@ target_link_libraries(
 
 add_executable(${PROJECT_NAME}
     src/copyleft/IsotropicRemesh.cpp
+    src/copyleft/SurfaceDelaunayRemesh.cpp
     src/IMesher.cpp
     src/OCCMesher.cpp
     src/NetgenMesher.cpp
